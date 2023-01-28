@@ -13,6 +13,14 @@ class Raise(Exception):
 class Mask(Exception):
     pass
 
+def catch_raise(e):
+    match e:
+        case Raise():
+            return True
+        case Mask(args=[x]):
+            raise x
+    return False
+
 class RewindManager:
     def __init__(self, state, mask=False):
         self.state = state
@@ -25,12 +33,10 @@ class RewindManager:
     def __exit__(self, exc_type, exc_value, traceback):
         if self.mask and exc_type in (Raise, Mask):
             raise Mask(exc_value)
-        elif exc_type is Raise:
+        if catch_raise(exc_value):
             self.rewound = True
             self.state.restore(self.clone)
             return True
-        elif exc_type is Mask:
-            raise exc_value.args[0]
         else:
             self.rewound = False
 
@@ -358,6 +364,16 @@ def except_(state, rest, except_):
 @instruction("s")
 def suppress(state, rest):
     state.try_execute(rest)
+
+@instruction("!")
+def invert(state, rest):
+    # no rewinding
+    try:
+        state.execute(rest)
+    except (Raise, Mask) as e:
+        catch_raise(e)
+    else:
+        raise Raise
 
 @instruction("m")
 def mask(state, rest):
