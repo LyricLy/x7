@@ -125,6 +125,7 @@ def parse_block(s, i, close_brackets, backticks=Rule.CONSUME):
     code = []
     while i < len(s):
         c = s[i]
+        og_i = i
         i += 1
         if c == "}":
             match close_brackets:
@@ -158,7 +159,11 @@ def parse_block(s, i, close_brackets, backticks=Rule.CONSUME):
                     blocks.append(block)
                 block, i = parse_block(s, i, Rule.SEE)
                 blocks.append(block)
-            func = lambda s, f=inst.func, blocks=blocks: f(s, *blocks)
+            def func(state, f=inst.func, blocks=blocks, og_i=og_i):
+                try:
+                    f(state, *blocks)
+                except Raise:
+                    raise Raise(s, og_i, state)
             func.__name__ = inst.func.__name__
             func.__qualname__ = inst.func.__qualname__
             code.append(func)
@@ -177,6 +182,15 @@ def run_program(s):
     state = State()
     state.execute(parse_program(s))
     return state.stack
+
+def print_raise(r):
+    s, i, state = r.args
+    l = s.rfind("\n", 0, i)+1
+    r = s.find("\n", i)
+    line = s[l:r if r != -1 else None]
+    print("Instruction raised", file=sys.stderr)
+    print(line, file=sys.stderr)
+    print(" "*(i - l) + "^", file=sys.stderr)
 
 
 Box = namedtuple("Box", "val")
@@ -430,4 +444,8 @@ def mask(state, rest):
 if __name__ == "__main__":
     with open(sys.argv[1]) as f:
         s = f.read()
-    print(*[render(x) for x in run_program(s)])
+    try:
+        print(*[render(x) for x in run_program(s)])
+    except Raise as r:
+        print_raise(r)
+        sys.exit(1)
