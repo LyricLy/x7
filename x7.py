@@ -259,6 +259,24 @@ def int_mod(state):
     except ZeroDivisionError:
         raise Raise
 
+@instruction("<")
+def lt(state):
+    x, y = get_types(state, None, None)
+    if x >= y:
+        raise Raise
+
+@instruction("=")
+def eq(state):
+    x, y = get_types(state, None, None)
+    if x != y:
+        raise Raise
+
+@instruction(">")
+def gt(state):
+    x, y = get_types(state, None, None)
+    if x <= y:
+        raise Raise
+
 @instruction("b")
 def unbox(state):
     x, = get_types(state, Box)
