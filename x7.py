@@ -182,6 +182,13 @@ def run_program(s):
 Box = namedtuple("Box", "val")
 List = namedtuple("List", "type")
 
+def render(val):
+    match val:
+        case list():
+            return f"[{', '.join(render(v) for v in val)}]"
+        case _:
+            return str(val)
+
 def typeof(val):
     match val:
         case list([_]):
@@ -383,4 +390,4 @@ def mask(state, rest):
 if __name__ == "__main__":
     with open(sys.argv[1]) as f:
         s = f.read()
-    print(run_program(s))
+    print(*[render(x) for x in run_program(s)])
