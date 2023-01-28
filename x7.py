@@ -186,6 +186,8 @@ def render(val):
     match val:
         case list():
             return f"[{', '.join(render(v) for v in val)}]"
+        case x, y:
+            return f"({render(x)}, {render(y)})"
         case _:
             return str(val)
 
@@ -195,6 +197,8 @@ def typeof(val):
             return List(typeof(val[0]))
         case list():
             return List(None)
+        case (a, b):
+            return typeof(a), typeof(b)
         case _:
             return type(val)
 
@@ -204,6 +208,8 @@ def compatible(x, y):
             return True
         case List(x), List(y):
             return compatible(x, y)
+        case (x1, y1), (x2, y2):
+            return compatible(x1, x2) and compatible(y1, y2)
         case _:
             return x == y
 
@@ -286,6 +292,16 @@ def unbox(state):
 def box(state):
     x, = get_types(state, None)
     state.stack.append(Box(x))
+
+@instruction(",")
+def pair(state):
+    x, y = get_types(state, None, None)
+    state.stack.append((x, y))
+
+@instruction(";")
+def unpair(state):
+    x, = get_types(state, (None, None))
+    state.stack.extend(x)
 
 @instruction("[")
 def empty(state):
