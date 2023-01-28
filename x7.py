@@ -311,6 +311,12 @@ def concat(state):
             raise Raise
     state.stack.append(x)
 
+@instruction("W")
+def while_(state, block):
+    while True:
+        if state.try_execute(block):
+            break
+
 @instruction("F")
 def for_(state, block):
     l, = get_types(state, List(None))
