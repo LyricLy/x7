@@ -193,11 +193,11 @@ def render(val):
 
 def typeof(val):
     match val:
-        case list([_]):
+        case list([_, *_]):
             return List(typeof(val[0]))
         case list():
             return List(None)
-        case (a, b):
+        case a, b:
             return typeof(a), typeof(b)
         case _:
             return type(val)
