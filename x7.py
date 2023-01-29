@@ -10,12 +10,18 @@ from fractions import Fraction
 class Raise(Exception):
     pass
 
+class RaiseInfo(Exception):
+    def __init__(self, s, i, state):
+        self.s = s
+        self.i = i
+        self.state = state
+
 class Mask(Exception):
     pass
 
 def catch_raise(e):
     match e:
-        case Raise():
+        case RaiseInfo():
             return True
         case Mask(args=[x]):
             raise x
@@ -44,6 +50,7 @@ class State:
     def __init__(self):
         self.stack = []
         self.groups = []
+        self.last_popped = []
 
     def _top_group(self):
         if self.groups:
@@ -61,6 +68,7 @@ class State:
         x = self._top_group()
         l = self.stack[x:]
         del self.stack[x:]
+        self.last_popped = l
         return l
 
     def push_group(self, group):
@@ -72,6 +80,7 @@ class State:
         low = len(self.stack) - n
         while self.groups and self.groups[-1][1] > low:
             self.groups.pop()
+        self.last_popped = self.stack[low:]
         del self.stack[low:]
 
     def clone(self):
@@ -163,7 +172,7 @@ def parse_block(s, i, close_brackets, backticks=Rule.CONSUME):
                 try:
                     f(state, *blocks)
                 except Raise:
-                    raise Raise(s, og_i, state)
+                    raise RaiseInfo(s, og_i, state)
             func.__name__ = inst.func.__name__
             func.__qualname__ = inst.func.__qualname__
             code.append(func)
@@ -183,14 +192,18 @@ def run_program(s):
     state.execute(parse_program(s))
     return state.stack
 
-def print_raise(r):
-    s, i, state = r.args
-    l = s.rfind("\n", 0, i)+1
-    r = s.find("\n", i)
-    line = s[l:r if r != -1 else None]
+def render_stack(stack):
+    return " ".join(render(x) for x in stack)
+
+def print_raise(e):
+    l = e.s.rfind("\n", 0, e.i)+1
+    r = e.s.find("\n", e.i)
+    line = e.s[l:r if r != -1 else None]
     print("Instruction raised", file=sys.stderr)
+    stack = e.state.stack + e.state.last_popped
+    print(f"stack: {render_stack(stack)}" if stack else "stack empty", file=sys.stderr)
     print(line, file=sys.stderr)
-    print(" "*(i - l) + "^", file=sys.stderr)
+    print(" "*(e.i - l) + "^", file=sys.stderr)
 
 
 Box = namedtuple("Box", "val")
@@ -431,7 +444,7 @@ def invert(state, rest):
     # no rewinding
     try:
         state.execute(rest)
-    except (Raise, Mask) as e:
+    except (RaiseInfo, Mask) as e:
         catch_raise(e)
     else:
         raise Raise
@@ -445,7 +458,7 @@ if __name__ == "__main__":
     with open(sys.argv[1]) as f:
         s = f.read()
     try:
-        print(*[render(x) for x in run_program(s)])
-    except Raise as r:
+        print(render_stack(run_program(s)))
+    except RaiseInfo as r:
         print_raise(r)
         sys.exit(1)
