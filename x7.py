@@ -8,22 +8,27 @@ from fractions import Fraction
 
 
 class Raise(Exception):
-    pass
+    def __init__(self, reason):
+        self.reason = reason
 
 class RaiseInfo(Exception):
-    def __init__(self, s, i, state):
+    def __init__(self, reason, s, i, state):
+        self.reason = reason
         self.s = s
         self.i = i
         self.state = state
 
 class Mask(Exception):
-    pass
+    __match_args__ = ("inner",)
+
+    def __init__(self, inner):
+        self.inner = inner
 
 def catch_raise(e):
     match e:
         case RaiseInfo():
             return True
-        case Mask(args=[x]):
+        case Mask(x):
             raise x
     return False
 
@@ -58,7 +63,7 @@ class State:
             if len(self.stack) == y:
                 return x
         if not self.stack:
-            raise Raise
+            raise Raise("pop from empty stack")
         return len(self.stack)-1
 
     def peek_group(self):
@@ -171,8 +176,9 @@ def parse_block(s, i, close_brackets, backticks=Rule.CONSUME):
             def func(state, f=inst.func, blocks=blocks, og_i=og_i):
                 try:
                     f(state, *blocks)
-                except Raise:
-                    raise RaiseInfo(s, og_i, state)
+                except Raise as r:
+                    raise RaiseInfo(r.reason, s, og_i, state)
+                state.last_popped = []
             func.__name__ = inst.func.__name__
             func.__qualname__ = inst.func.__qualname__
             code.append(func)
@@ -199,7 +205,7 @@ def print_raise(e):
     l = e.s.rfind("\n", 0, e.i)+1
     r = e.s.find("\n", e.i)
     line = e.s[l:r if r != -1 else None]
-    print("Instruction raised", file=sys.stderr)
+    print(f"Instruction raised: {e.reason}", file=sys.stderr)
     stack = e.state.stack + e.state.last_popped
     print(f"stack: {render_stack(stack)}" if stack else "stack empty", file=sys.stderr)
     print(line, file=sys.stderr)
@@ -243,8 +249,10 @@ def compatible(x, y):
 def get_types(state, *args):
     l = len(args)
     top = state.stack[-l:]
-    if len(top) != l or any(not compatible(typeof(x), y) for x, y in zip(top, args)):
-        raise Raise
+    if len(top) != l:
+        raise Raise("pop from empty stack")
+    elif any(not compatible(typeof(x), y) for x, y in zip(top, args)):
+        raise Raise("type error")
     state.pop(l)
     return top
 
@@ -270,45 +278,45 @@ def true_div(state):
     try:
         state.stack.append(x / y)
     except ZeroDivisionError:
-        raise Raise
+        raise Raise("division by zero")
 
 @instruction("/")
 def int_div(state):
     x, y = get_types(state, Fraction, Fraction)
     if x.denominator != 1 or y.denominator != 1:
-        raise Raise
+        raise Raise("arguments must be integers")
     try:
         state.stack.append(Fraction(x // y))
     except ZeroDivisionError:
-        raise Raise
+        raise Raise("division by zero")
 
 @instruction("%")
 def int_mod(state):
     x, y = get_types(state, Fraction, Fraction)
     if x.denominator != 1 or y.denominator != 1:
-        raise Raise
+        raise Raise("arguments must be integers")
     try:
         state.stack.append(Fraction(x % y))
     except ZeroDivisionError:
-        raise Raise
+        raise Raise("modulo by zero")
 
 @instruction("<")
 def lt(state):
     x, y = get_types(state, None, None)
     if x >= y:
-        raise Raise
+        raise Raise("assertion failed")
 
 @instruction("=")
 def eq(state):
     x, y = get_types(state, None, None)
     if x != y:
-        raise Raise
+        raise Raise("assertion failed")
 
 @instruction(">")
 def gt(state):
     x, y = get_types(state, None, None)
     if x <= y:
-        raise Raise
+        raise Raise("assertion failed")
 
 @instruction("b")
 def unbox(state):
@@ -351,7 +359,7 @@ def concat(state):
         case a, b if compatible(a, b):
             x = [x, y]
         case _:
-            raise Raise
+            raise Raise("types incompatible")
     state.stack.append(x)
 
 @instruction("W")
@@ -388,7 +396,7 @@ def map(state, block):
 def times(state, block):
     n, = get_types(state, Fraction)
     if n.denominator != 1 or n < 0:
-        raise Raise
+        raise Raise("argument must be a nonnegative integer")
     for _ in range(int(n)):
         state.execute(block)
 
@@ -424,11 +432,11 @@ def permute(state, rest):
         state.stack[:] = perm
         if not state.try_execute(rest):
             return
-    raise Raise
+    raise Raise("all permutations failed")
 
 @instruction("r")
 def raise_(state):
-    raise Raise
+    raise Raise("explicit raise")
 
 @instruction("e")
 def except_(state, rest, except_):
@@ -447,7 +455,7 @@ def invert(state, rest):
     except (RaiseInfo, Mask) as e:
         catch_raise(e)
     else:
-        raise Raise
+        raise Raise("block didn't raise")
 
 @instruction("m")
 def mask(state, rest):
