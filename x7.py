@@ -12,45 +12,26 @@ class Raise(Exception):
     def __init__(self, reason):
         self.reason = reason
 
-class RaiseInfo(Exception):
+class Raisoid(Exception):
+    pass
+
+class RaiseInfo(Raisoid):
     def __init__(self, reason, s, i, state):
         self.reason = reason
         self.s = s
         self.i = i
         self.state = state
 
-class Mask(Exception):
+class Mask(Raisoid):
     __match_args__ = ("inner",)
 
     def __init__(self, inner):
         self.inner = inner
 
-def catch_raise(e):
+def propagate_mask(e):
     match e:
-        case RaiseInfo():
-            return True
         case Mask(x):
             raise x
-    return False
-
-class RewindManager:
-    def __init__(self, state, mask=False):
-        self.state = state
-        self.mask = mask
-
-    def __enter__(self):
-        self.clone = self.state.clone()
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        if self.mask and exc_type in (Raise, Mask):
-            raise Mask(exc_value)
-        if catch_raise(exc_value):
-            self.rewound = True
-            self.state.restore(self.clone)
-            return True
-        else:
-            self.rewound = False
 
 class State:
     def __init__(self):
@@ -103,17 +84,21 @@ class State:
         for cmd in block:
             cmd(self)
 
-    def rewind(self):
-        return RewindManager(self)
-
-    def try_execute(self, block):
-        with self.rewind() as r:
+    def try_execute(self, block, save=None):
+        save = save or self.clone()
+        try:
             self.execute(block)
-        return r.rewound
+        except Raisoid as e:
+            propagate_mask(e)
+            self.restore(save)
+            return True
+        return False
 
     def mask(self, block):
-        with RewindManager(self, True):
+        try:
             self.execute(block)
+        except Raisoid as e:
+            raise Mask(e)
 
 
 Instruction = namedtuple("Instruction", "func blocks")
@@ -159,6 +144,7 @@ def run_inst(f, s, blocks, og_i):
         state.last_popped = []
     func.__name__ = f.__name__
     func.__qualname__ = f.__qualname__
+    return func
 
 class Rule(Enum):
     IGNORE = 0
@@ -446,10 +432,9 @@ def map(state, block):
     res = []
     ty = None
     for x in l:
-        with state.rewind() as r:
-            state.stack.append(x)
-            state.execute(block)
-        if not r.rewound:
+        save = state.clone()
+        state.stack.append(x)
+        if not state.try_execute(block, save):
             v, = get_types(state, None)
             v_ty = typeof(v)
             if compatible(v_ty, ty):
@@ -464,6 +449,16 @@ def times(state, block):
         raise Raise("argument must be a nonnegative integer")
     for _ in range(int(n)):
         state.execute(block)
+
+@instruction("P")
+def pick(state, rest):
+    l, = get_types(state, List(None))
+    save = state.clone()
+    for x in l:
+        state.stack.append(x)
+        if not state.try_execute(rest, save):
+            return
+    raise Raise("all choices raised")
 
 @instruction("&")
 def tie(state):
@@ -492,12 +487,13 @@ def flip(state):
 
 @instruction("~")
 def permute(state, rest):
+    save = state.clone()
     state.groups = []
     for perm in itertools.permutations(state.stack):
         state.stack[:] = perm
-        if not state.try_execute(rest):
+        if not state.try_execute(rest, save):
             return
-    raise Raise("all permutations failed")
+    raise Raise("all permutations raised")
 
 @instruction("r")
 def raise_(state):
@@ -517,8 +513,8 @@ def invert(state, rest):
     # no rewinding
     try:
         state.execute(rest)
-    except (RaiseInfo, Mask) as e:
-        catch_raise(e)
+    except Raisoid as e:
+        propagate_mask(e)
     else:
         raise Raise("block didn't raise")
 
