@@ -1,6 +1,7 @@
 import copy
 import inspect
 import sys
+import math
 import itertools
 from collections import namedtuple
 from enum import Enum
@@ -56,6 +57,7 @@ class State:
         self.stack = []
         self.groups = []
         self.last_popped = []
+        self.variables = {}
 
     def _top_group(self):
         if self.groups:
@@ -94,6 +96,8 @@ class State:
     def restore(self, clone):
         self.stack = clone.stack
         self.groups = clone.groups
+        self.variables = clone.variables
+        self.last_popped = []
 
     def execute(self, block):
         for cmd in block:
@@ -130,6 +134,32 @@ def int_literal(n):
     push_.__qualname__ += str(n)
     return push_
 
+def get_var(v, s, og_i):
+    def get_var(state):
+        try:
+            state.stack.append(state.variables[v])
+        except KeyError:
+            raise RaiseInfo("variable not defined", s, og_i+1, state)
+    return get_var
+
+def set_var(v, s, og_i):
+    def set_var(state):
+        try:
+            state.variables[v] = state.stack.pop()
+        except IndexError:
+            raise RaiseInfo("pop from empty stack", s, og_i, state)
+    return set_var
+
+def run_inst(f, s, blocks, og_i):
+    def func(state):
+        try:
+            f(state, *blocks)
+        except Raise as r:
+            raise RaiseInfo(r.reason, s, og_i, state)
+        state.last_popped = []
+    func.__name__ = f.__name__
+    func.__qualname__ = f.__qualname__
+
 class Rule(Enum):
     IGNORE = 0
     CONSUME = 1
@@ -165,6 +195,14 @@ def parse_block(s, i, close_brackets, backticks=Rule.CONSUME):
                 n = n*10 + int(d)
                 i += 1
             code.append(int_literal(n))
+        elif c == ";":
+            v = s[i]
+            i += 1
+            code.append(get_var(v, s, og_i))
+        elif c == ":":
+            v = s[i]
+            i += 1
+            code.append(set_var(v, s, og_i))
         elif inst := instructions.get(c):
             blocks = []
             if inst.blocks:
@@ -173,15 +211,7 @@ def parse_block(s, i, close_brackets, backticks=Rule.CONSUME):
                     blocks.append(block)
                 block, i = parse_block(s, i, Rule.SEE)
                 blocks.append(block)
-            def func(state, f=inst.func, blocks=blocks, og_i=og_i):
-                try:
-                    f(state, *blocks)
-                except Raise as r:
-                    raise RaiseInfo(r.reason, s, og_i, state)
-                state.last_popped = []
-            func.__name__ = inst.func.__name__
-            func.__qualname__ = inst.func.__qualname__
-            code.append(func)
+            code.append(run_inst(inst.func, s, blocks, og_i))
         elif not c.isspace():
             print(f"warning: unknown instruction '{c}'", file=sys.stderr)
     return code, i
@@ -280,7 +310,7 @@ def true_div(state):
     except ZeroDivisionError:
         raise Raise("division by zero")
 
-@instruction("/")
+@instruction("Q")
 def int_div(state):
     x, y = get_types(state, Fraction, Fraction)
     if x.denominator != 1 or y.denominator != 1:
@@ -290,7 +320,7 @@ def int_div(state):
     except ZeroDivisionError:
         raise Raise("division by zero")
 
-@instruction("%")
+@instruction("R")
 def int_mod(state):
     x, y = get_types(state, Fraction, Fraction)
     if x.denominator != 1 or y.denominator != 1:
@@ -300,22 +330,50 @@ def int_mod(state):
     except ZeroDivisionError:
         raise Raise("modulo by zero")
 
+@instruction("F")
+def floor(state):
+    x, = get_types(state, Fraction)
+    state.stack.append(math.floor(x))
+
+@instruction("C")
+def ceil(state):
+    x, = get_types(state, Fraction)
+    state.stack.append(math.ceil(x))
+
 @instruction("<")
 def lt(state):
     x, y = get_types(state, None, None)
-    if x >= y:
+    if not x < y:
+        raise Raise("assertion failed")
+
+@instruction("L")
+def le(state):
+    x, y = get_types(state, None, None)
+    if not x <= y:
         raise Raise("assertion failed")
 
 @instruction("=")
 def eq(state):
     x, y = get_types(state, None, None)
-    if x != y:
+    if not x == y:
+        raise Raise("assertion failed")
+
+@instruction("/")
+def ne(state):
+    x, y = get_types(state, None, None)
+    if not x != y:
+        raise Raise("assertion failed")
+
+@instruction("G")
+def ge(state):
+    x, y = get_types(state, None, None)
+    if not x >= y:
         raise Raise("assertion failed")
 
 @instruction(">")
 def gt(state):
     x, y = get_types(state, None, None)
-    if x <= y:
+    if not x > y:
         raise Raise("assertion failed")
 
 @instruction("b")
@@ -333,7 +391,7 @@ def pair(state):
     x, y = get_types(state, None, None)
     state.stack.append((x, y))
 
-@instruction(";")
+@instruction("%")
 def unpair(state):
     x, = get_types(state, (None, None))
     state.stack.extend(x)
@@ -361,6 +419,13 @@ def concat(state):
         case _:
             raise Raise("types incompatible")
     state.stack.append(x)
+
+@instruction("i")
+def iota(state):
+    n, = get_types(state, Fraction)
+    if n.denominator != 1 or n < 0:
+        raise Raise("argument must be a nonnegative integer")
+    state.stack.append(list(range(n)))
 
 @instruction("W")
 def while_(state, block):
