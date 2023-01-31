@@ -482,6 +482,15 @@ def under(state, rest):
     state.execute(rest)
     state.push_group(x)
 
+@instruction("l")
+def lift(state, b1, b2):
+    save = state.clone()
+    state.execute(b2)
+    g = state.pop_group()
+    state.restore(save)
+    state.execute(b1)
+    state.push_group(g)
+
 @instruction("f")
 def flip(state):
     y, x = state.pop_group(), state.pop_group()
