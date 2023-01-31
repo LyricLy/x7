@@ -56,7 +56,7 @@ class State:
         x = self._top_group()
         l = self.stack[x:]
         del self.stack[x:]
-        self.last_popped = l
+        self.last_popped[-1].extend(l)
         return l
 
     def push_group(self, group):
@@ -68,7 +68,7 @@ class State:
         low = len(self.stack) - n
         while self.groups and self.groups[-1][1] > low:
             self.groups.pop()
-        self.last_popped = self.stack[low:]
+        self.last_popped[-1].extend(self.stack[low:])
         del self.stack[low:]
 
     def clone(self):
@@ -78,19 +78,19 @@ class State:
         self.stack = clone.stack
         self.groups = clone.groups
         self.variables = clone.variables
-        self.last_popped = []
+        self.last_popped = clone.last_popped
 
     def execute(self, block):
         for cmd in block:
             cmd(self)
 
     def try_execute(self, block, save=None):
-        save = save or self.clone()
+        save = save or self
         try:
             self.execute(block)
         except Raisoid as e:
             propagate_mask(e)
-            self.restore(save)
+            self.restore(save.clone())
             return True
         return False
 
@@ -137,11 +137,12 @@ def set_var(v, s, og_i):
 
 def run_inst(f, s, blocks, og_i):
     def func(state):
+        state.last_popped.append([])
         try:
             f(state, *blocks)
         except Raise as r:
             raise RaiseInfo(r.reason, s, og_i, state)
-        state.last_popped = []
+        state.last_popped.pop()
     func.__name__ = f.__name__
     func.__qualname__ = f.__qualname__
     return func
@@ -222,7 +223,9 @@ def print_raise(e):
     r = e.s.find("\n", e.i)
     line = e.s[l:r if r != -1 else None]
     print(f"Instruction raised: {e.reason}", file=sys.stderr)
-    stack = e.state.stack + e.state.last_popped
+    stack = e.state.stack.copy()
+    for p in e.state.last_popped:
+        stack.extend(p)
     print(f"stack: {render_stack(stack)}" if stack else "stack empty", file=sys.stderr)
     print(line, file=sys.stderr)
     print(" "*(e.i - l) + "^", file=sys.stderr)
@@ -411,7 +414,7 @@ def iota(state):
     n, = get_types(state, Fraction)
     if n.denominator != 1 or n < 0:
         raise Raise("argument must be a nonnegative integer")
-    state.stack.append(list(range(n)))
+    state.stack.append([Fraction(x) for x in range(n.numerator)])
 
 @instruction("W")
 def while_(state, block):
