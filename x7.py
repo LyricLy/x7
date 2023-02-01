@@ -216,7 +216,7 @@ def run_program(s):
     return state.stack
 
 def render_stack(stack):
-    return " ".join(render(x) for x in stack)
+    return " ".join(render(x) for x in stack) if stack else "<empty>"
 
 def print_raise(e):
     l = e.s.rfind("\n", 0, e.i)+1
@@ -226,7 +226,7 @@ def print_raise(e):
     stack = e.state.stack.copy()
     for p in e.state.last_popped:
         stack.extend(p)
-    print(f"stack: {render_stack(stack)}" if stack else "stack empty", file=sys.stderr)
+    print(f"stack: {render_stack(stack)}", file=sys.stderr)
     print(line, file=sys.stderr)
     print(" "*(e.i - l) + "^", file=sys.stderr)
 
@@ -534,12 +534,27 @@ def invert(state, rest):
 def mask(state, rest):
     state.mask(rest)
 
+@instruction("v")
+def debug(state):
+    print(f"stack: {render_stack(state.stack)}", file=sys.stderr)
+
+@instruction("V")
+def debug_raises(state, rest):
+    try:
+        state.execute(rest)
+    except Raisoid as r:
+        propagate_mask(r)
+        print_raise(r)
+        raise
+
 
 if __name__ == "__main__":
     with open(sys.argv[1]) as f:
         s = f.read()
     try:
         print(render_stack(run_program(s)))
-    except RaiseInfo as r:
+    except Raisoid as r:
+        while isinstance(r, Mask):
+            r = r.inner
         print_raise(r)
         sys.exit(1)
