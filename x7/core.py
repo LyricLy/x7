@@ -548,7 +548,7 @@ def debug_raises(state, rest):
         raise
 
 
-if __name__ == "__main__":
+def run():
     with open(sys.argv[1]) as f:
         s = f.read()
     try:

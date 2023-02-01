@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "x7"
+authors = [
+    {name = "Christina Hanson", email = "christinahansondesu@gmail.com"}
+]
+description = "A pseudo-golfing language based on exceptions."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dynamic = ["version"]
+
+[project.scripts]
+x7 = "x7.core:run"
+
+[tool.setuptools_scm]
