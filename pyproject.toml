@@ -15,5 +15,3 @@ dynamic = ["version"]
 
 [project.scripts]
 x7 = "x7.core:run"
-
-[tool.setuptools_scm]
