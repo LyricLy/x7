@@ -50,7 +50,7 @@ class State:
         return len(self.stack)-1
 
     def peek_group(self):
-        return self.stack[self._top_group():]
+        return [copy.copy(x) for x in self.stack[self._top_group():]]
 
     def pop_group(self):
         x = self._top_group()
@@ -470,7 +470,7 @@ def tie(state):
 
 @instruction("d")
 def dup(state):
-    state.push_group([copy.copy(x) for x in state.peek_group()])
+    state.push_group(state.peek_group())
 
 @instruction("p")
 def pop(state):
@@ -494,6 +494,12 @@ def lift(state, b1, b2):
 @instruction("f")
 def flip(state):
     y, x = state.pop_group(), state.pop_group()
+    state.push_group(y)
+    state.push_group(x)
+
+@instruction("^")
+def yank(state):
+    y, x = state.pop_group(), state.peek_group()
     state.push_group(y)
     state.push_group(x)
 
