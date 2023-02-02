@@ -474,7 +474,7 @@ def dup(state):
 
 @instruction("p")
 def pop(state):
-    state.pop_group()
+    state.pop()
 
 @instruction("_")
 def under(state, rest):
