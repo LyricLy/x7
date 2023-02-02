@@ -489,7 +489,7 @@ def lift(state, b1, b2):
     g = state.pop_group()
     state.restore(save)
     state.execute(b1)
-    state.push_group(g)
+    state.push_group(state.pop_group() + g)
 
 @instruction("f")
 def flip(state):
