@@ -34,7 +34,8 @@ def propagate_mask(e):
             raise x
 
 class State:
-    def __init__(self):
+    def __init__(self, funcs):
+        self.funcs = funcs
         self.stack = []
         self.groups = []
         self.last_popped = []
@@ -127,6 +128,16 @@ def get_var(v, s, og_i):
             raise RaiseInfo("variable not defined", s, og_i+1, state)
     return get_var
 
+def call_func(n, s, og_i):
+    def call_(state):
+        try:
+            state.execute(state.funcs[n-1])
+        except IndexError:
+            raise RaiseInfo("function not defined", s, og_i+1, state)
+    call_.__name__ += str(n)
+    call_.__qualname__ += str(n)
+    return call_
+
 def set_var(v, s, og_i):
     def set_var(state):
         try:
@@ -152,9 +163,18 @@ class Rule(Enum):
     CONSUME = 1
     SEE = 2
 
+def parse_number(s, i):
+    if not s[i].isdigit():
+        return None
+    n = 0
+    while (d := s[i:i+1]).isdigit():
+        n = n*10 + int(d)
+        i += 1
+    return n, i
+
 def parse_block(s, i, close_brackets, backticks=Rule.CONSUME):
     code = []
-    while i < len(s):
+    while i < len(s) and s[i] != "\n":
         c = s[i]
         og_i = i
         i += 1
@@ -172,20 +192,23 @@ def parse_block(s, i, close_brackets, backticks=Rule.CONSUME):
                 case Rule.SEE:
                     i -= 1
                     break
+                case Rule.IGNORE:
+                    print("warning: redundant backtick", file=sys.stderr)
+                    print_pos(s, og_i)
         elif c == "{":
             block, i = parse_block(s, i, Rule.CONSUME, Rule.SEE)
             code.extend(block)
-        elif c.isdigit():
-            i -= 1
-            n = 0
-            while (d := s[i:i+1]).isdigit():
-                n = n*10 + int(d)
-                i += 1
+        elif r := parse_number(s, og_i):
+            n, i = r
             code.append(int_literal(n))
         elif c == ";":
-            v = s[i]
-            i += 1
-            code.append(get_var(v, s, og_i))
+            if r := parse_number(s, i):
+                n, i = r
+                code.append(call_func(n, s, og_i))
+            else:
+                v = s[i]
+                i += 1
+                code.append(get_var(v, s, og_i))
         elif c == ":":
             v = s[i]
             i += 1
@@ -199,36 +222,42 @@ def parse_block(s, i, close_brackets, backticks=Rule.CONSUME):
                 block, i = parse_block(s, i, Rule.SEE)
                 blocks.append(block)
             code.append(run_inst(inst.func, s, blocks, og_i))
-        elif not c.isspace():
+        elif c != " ":
             print(f"warning: unknown instruction '{c}'", file=sys.stderr)
     return code, i
 
 def parse_program(s):
-    func, i = parse_block(s, 0, Rule.IGNORE, Rule.SEE)
-    if s[i:i+1] not in ("", "}"):
-        print("error: unexpected `", file=sys.stderr)
-        sys.exit(1)
-    return func
+    i = 0
+    funcs = []
+    while i < len(s):
+        func, i = parse_block(s, i, Rule.IGNORE, Rule.IGNORE)
+        funcs.append(func)
+        i += 1
+    return funcs
 
 def run_program(s):
-    state = State()
-    state.execute(parse_program(s))
+    state = State(parse_program(s))
+    if state.funcs:
+        state.execute(state.funcs[-1])
     return state.stack
 
 def render_stack(stack):
     return " ".join(render(x) for x in stack) if stack else "<empty>"
 
+def print_pos(s, i):
+    l = s.rfind("\n", 0, i)+1
+    r = s.find("\n", i)
+    line = s[l:r if r != -1 else None]
+    print(line, file=sys.stderr)
+    print(" "*(i - l) + "^", file=sys.stderr)
+
 def print_raise(e):
-    l = e.s.rfind("\n", 0, e.i)+1
-    r = e.s.find("\n", e.i)
-    line = e.s[l:r if r != -1 else None]
     print(f"Instruction raised: {e.reason}", file=sys.stderr)
     stack = e.state.stack.copy()
     for p in e.state.last_popped:
         stack.extend(p)
     print(f"stack: {render_stack(stack)}", file=sys.stderr)
-    print(line, file=sys.stderr)
-    print(" "*(e.i - l) + "^", file=sys.stderr)
+    print_pos(e.s, e.i)
 
 
 Box = namedtuple("Box", "val")
