@@ -211,6 +211,9 @@ def parse_block(s, i, close_brackets, backticks=Rule.CONSUME):
                 code.append(get_var(v, s, og_i))
         elif c == ":":
             v = s[i]
+            if v.isdigit():
+                print("warning: variables named after digits are unusable", file=sys.stderr)
+                print_pos(s, i)
             i += 1
             code.append(set_var(v, s, og_i))
         elif inst := instructions.get(c):
