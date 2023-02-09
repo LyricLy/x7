@@ -2,6 +2,7 @@ import copy
 import inspect
 import sys
 import math
+import functools
 import itertools
 from collections import namedtuple
 from enum import Enum
@@ -65,8 +66,15 @@ class State:
             self.groups.append((len(self.stack), len(self.stack) + len(group)))
         self.stack.extend(group)
 
+    def peek(self, n=1):
+        if len(self.stack) < n:
+            raise Raise("pop from empty stack")
+        return self.stack[-n:]
+
     def pop(self, n=1):
         low = len(self.stack) - n
+        if low < 0:
+            raise Raise("pop from empty stack")
         while self.groups and self.groups[-1][1] > low:
             self.groups.pop()
         self.last_popped[-1].extend(self.stack[low:])
@@ -86,12 +94,12 @@ class State:
             cmd(self)
 
     def try_execute(self, block, save=None):
-        save = save or self
+        clone = self.clone() if not save else None
         try:
             self.execute(block)
         except Raisoid as e:
             propagate_mask(e)
-            self.restore(save.clone())
+            self.restore(save.clone() if save else clone)
             return True
         return False
 
@@ -108,6 +116,8 @@ instructions = {}
 
 def instruction(name):
     def instruction_deco(func):
+        if name in instructions:
+            raise KeyError("instruction name conflict")
         instructions[name] = Instruction(func, len(inspect.getfullargspec(func).args)-1)
         return func
     return instruction_deco
@@ -264,12 +274,31 @@ def print_raise(e):
 
 
 Box = namedtuple("Box", "val")
+View = namedtuple("View", "xs assign depth")
 List = namedtuple("List", "type")
+Mark = namedtuple("Mark", "x")
+
+NEVER = 0
+FROM_TOP = 1
+FROM_TOP_PAIR = 2
+FROM_SINGLE = 3
+TO_SINGLE = 4
+
+TOP = 0
+TOP_PAIR = 1
+SINGLE = 2
+DEEP = 3
 
 def render(val):
     match val:
         case list():
             return f"[{', '.join(render(v) for v in val)}]"
+        case Box(v):
+            return f"&{render(v)}"
+        case View():
+            return render(val.assign([Mark(x) for x in val.xs]))
+        case Mark(v):
+            return f"<{render(v)}>"
         case x, y:
             return f"({render(x)}, {render(y)})"
         case _:
@@ -299,14 +328,45 @@ def compatible(x, y):
 
 def get_types(state, *args):
     l = len(args)
-    top = state.stack[-l:]
-    if len(top) != l:
-        raise Raise("pop from empty stack")
-    elif any(not compatible(typeof(x), y) for x, y in zip(top, args)):
+    top = state.peek(l)
+    if any(not compatible(typeof(x), y) for x, y in zip(top, args)):
         raise Raise("type error")
     state.pop(l)
     return top
 
+def assert_int(x):
+    if x.denominator != 1:
+        raise Raise("non-integer argument")
+    return x.numerator
+
+def assert_nonneg_int(x):
+    if x < 0:
+        raise Raise("negative argument")
+    return assert_int(x)
+
+def view_type(v):
+    return typeof(v.xs[0]) if v.xs else None
+
+def get_view(state, ty=None, *, drill):
+    v, = get_types(state, None)
+    if not isinstance(v, View):
+        v = View([v], lambda xs: xs[0], TOP)
+    while drill > v.depth and (n := flatten_view(v)):
+        v = n
+    if not compatible(view_type(v), ty) or drill > v.depth and drill != TO_SINGLE:
+        raise Raise("type error")
+    return v
+
+def flatten_view(v):
+    if not compatible(view_type(v), List(None)):
+        return None
+    xs = []
+    ixs = []
+    for x in v.xs:
+        ixs.append((len(xs), len(xs)+len(x)))
+        xs.extend(x)
+    assign = lambda ys: v.assign([[x for x in ys[a:b] if x is not None] for a, b in ixs])
+    return View(xs, assign, DEEP)
 
 @instruction("+")
 def add(state):
@@ -334,8 +394,8 @@ def true_div(state):
 @instruction("Q")
 def int_div(state):
     x, y = get_types(state, Fraction, Fraction)
-    if x.denominator != 1 or y.denominator != 1:
-        raise Raise("arguments must be integers")
+    assert_int(x)
+    assert_int(y)
     try:
         state.stack.append(Fraction(x // y))
     except ZeroDivisionError:
@@ -344,19 +404,19 @@ def int_div(state):
 @instruction("R")
 def int_mod(state):
     x, y = get_types(state, Fraction, Fraction)
-    if x.denominator != 1 or y.denominator != 1:
-        raise Raise("arguments must be integers")
+    assert_int(x)
+    assert_int(y)
     try:
         state.stack.append(Fraction(x % y))
     except ZeroDivisionError:
         raise Raise("modulo by zero")
 
-@instruction("F")
+@instruction("J")
 def floor(state):
     x, = get_types(state, Fraction)
     state.stack.append(math.floor(x))
 
-@instruction("C")
+@instruction("K")
 def ceil(state):
     x, = get_types(state, Fraction)
     state.stack.append(math.ceil(x))
@@ -412,18 +472,9 @@ def pair(state):
     x, y = get_types(state, None, None)
     state.stack.append((x, y))
 
-@instruction("%")
-def unpair(state):
-    x, = get_types(state, (None, None))
-    state.stack.extend(x)
-
 @instruction("[")
 def empty(state):
     state.stack.append([])
-
-@instruction("]")
-def enlist(state):
-    state.stack.append(get_types(state, None))
 
 @instruction(".")
 def concat(state):
@@ -444,9 +495,156 @@ def concat(state):
 @instruction("i")
 def iota(state):
     n, = get_types(state, Fraction)
-    if n.denominator != 1 or n < 0:
-        raise Raise("argument must be a nonnegative integer")
-    state.stack.append([Fraction(x) for x in range(n.numerator)])
+    state.stack.append([Fraction(x) for x in range(assert_nonneg_int(n))])
+
+@instruction("h")
+def head(state):
+    v = get_view(state, (None, None), drill=TO_SINGLE)
+    state.stack.append(View([x[0] for x in v.xs], lambda ys: v.assign([(y, x[1]) for x, y in zip(v.xs, ys)]), max(v.depth, TOP_PAIR)))
+
+@instruction("t")
+def tail(state):
+    v = get_view(state, (None, None), drill=TO_SINGLE)
+    state.stack.append(View([x[1] for x in v.xs], lambda ys: v.assign([(x[0], y) for x, y in zip(v.xs, ys)]), max(v.depth, TOP_PAIR)))
+
+@instruction("j")
+def join(state):
+    v = get_view(state, List(None), drill=NEVER)
+    state.stack.append(flatten_view(v))
+
+@instruction("n")
+def nth(state):
+    i, = get_types(state, Fraction)
+    i = assert_nonneg_int(i)
+    v = get_view(state, List(None), drill=NEVER)
+    def assign(xs, x):
+        if x is not None:
+            xs[i] = x
+        else:
+            del xs[i]
+        return xs
+    try:
+        state.stack.append(View([x[i] for x in v.xs], lambda ys: v.assign([assign(x, y) for x, y in zip(v.xs, ys)]), DEEP))
+    except IndexError:
+        raise Raise("index out of bounds")
+
+@instruction("s")
+def select(state):
+    ixs = get_view(state, drill=FROM_SINGLE).xs
+    v = get_view(state, drill=NEVER)
+    def assign_many(xs, ys):
+        for i, y in zip(ixs, ys):
+            xs[i.numerator] = y
+        return [x for x in xs if x is not None]
+    try:
+        state.stack.append(View([x[assert_nonneg_int(i)] for x in v.xs for i in ixs], lambda ys: v.assign([assign_many(x, ys[j:j+len(ixs)]) for x, j in zip(v.xs, range(0, len(ys), len(ixs)))]), DEEP))
+    except IndexError:
+        raise Raise("index out of bounds")
+
+@instruction("w")
+def where(state, block):
+    v = get_view(state, drill=FROM_SINGLE)
+    xs = []
+    ixs = []
+    for i, x in enumerate(v.xs):
+        save = state.clone()
+        state.stack.append(x)
+        if not state.try_execute(block, save):
+            ixs.append(len(xs))
+            xs.append(x)
+        else:
+            ixs.append(None)
+    state.stack.append(View(xs, lambda ys: v.assign([ys[j] if j is not None else v.xs[i] for i, j in enumerate(ixs)]), v.depth))
+
+@instruction("u")
+def u_turn(state):
+    v = get_view(state,  drill=FROM_SINGLE)
+    state.stack.append(View(v.xs[::-1], lambda xs: v.assign(xs[::-1]), v.depth))
+
+@instruction("@")
+def only(state):
+    v = get_view(state, drill=FROM_TOP)
+    if len(v.xs) != 1:
+        raise Raise("wrong number of elements in view")
+    state.stack.append(v.xs[0])
+
+@instruction("]")
+def enlist(state):
+    v = get_view(state, drill=NEVER)
+    state.stack.append(v.xs)
+
+@instruction("$")
+def set(state):
+    x, = get_types(state, None)
+    v = get_view(state, drill=FROM_TOP)
+    state.stack.append(v.assign([copy.copy(x) for _ in range(len(v.xs))]))
+
+@instruction("X")
+def eighty_six(state):
+    v = get_view(state, drill=FROM_TOP_PAIR)
+    state.stack.append(v.assign([None] * len(v.xs)))
+
+@instruction("P")
+def paste(state):
+    b = get_view(state, drill=FROM_TOP_PAIR)
+    a = get_view(state, drill=FROM_TOP_PAIR)
+    state.stack.append(a.assign(b.xs + [None]*(len(a.xs)-len(b.xs))))
+
+@instruction("M")
+def map(state, block):
+    v = get_view(state, drill=FROM_TOP)
+    res = []
+    ty = None
+    for x in v.xs:
+        save = state.clone()
+        state.stack.append(x)
+        if not state.try_execute(block, save):
+            y, = get_types(state, None)
+            y_ty = typeof(y)
+            if compatible(y_ty, ty):
+                ty = ty or y_ty
+                res.append(y)
+        else:
+            res.append(None)
+    state.stack.append(v.assign(res))
+
+@instruction("Z")
+def zip_with(state, block):
+    a = get_view(state, drill=FROM_TOP)
+    b = get_view(state, drill=FROM_TOP)
+    res = []
+    ty = None
+    for x, y in zip(a.xs, b.xs):
+        save = state.clone()
+        state.stack.append(x)
+        state.stack.append(y)
+        if not state.try_execute(block, save):
+            y, = get_types(state, None)
+            y_ty = typeof(y)
+            if compatible(y_ty, ty):
+                ty = ty or y_ty
+                res.append(y)
+        else:
+            res.append(None)
+    res.extend([None]*(len(a.xs)-len(res)))
+    state.stack.append(a.assign(res))
+
+@instruction("E")
+def each(state, block):
+    v = get_view(state, drill=FROM_SINGLE)
+    for x in v.xs:
+        state.stack.append(x)
+        state.execute(block)
+
+@instruction("C")
+def choose(state, rest):
+    v = get_view(state, drill=FROM_SINGLE)
+    save = state.clone()
+    for x in v.xs:
+        state.stack.append(x)
+        if not state.try_execute(rest, save):
+            return
+    raise Raise("all choices raised")
 
 @instruction("W")
 def while_(state, block):
@@ -454,46 +652,11 @@ def while_(state, block):
         if state.try_execute(block):
             break
 
-@instruction("F")
-def for_(state, block):
-    l, = get_types(state, List(None))
-    for x in l:
-        state.stack.append(x)
-        state.execute(block)
-
-@instruction("M")
-def map(state, block):
-    l, = get_types(state, List(None))
-    res = []
-    ty = None
-    for x in l:
-        save = state.clone()
-        state.stack.append(x)
-        if not state.try_execute(block, save):
-            v, = get_types(state, None)
-            v_ty = typeof(v)
-            if compatible(v_ty, ty):
-                ty = ty or v_ty
-                res.append(v)
-    state.stack.append(res)
-
 @instruction("T")
 def times(state, block):
     n, = get_types(state, Fraction)
-    if n.denominator != 1 or n < 0:
-        raise Raise("argument must be a nonnegative integer")
-    for _ in range(int(n)):
+    for _ in range(assert_nonneg_int(n)):
         state.execute(block)
-
-@instruction("P")
-def pick(state, rest):
-    l, = get_types(state, List(None))
-    save = state.clone()
-    for x in l:
-        state.stack.append(x)
-        if not state.try_execute(rest, save):
-            return
-    raise Raise("all choices raised")
 
 @instruction("&")
 def tie(state):
@@ -554,8 +717,8 @@ def except_(state, rest, except_):
     if state.try_execute(rest):
         state.execute(except_)
 
-@instruction("s")
-def suppress(state, rest):
+@instruction("q")
+def quiet(state, rest):
     state.try_execute(rest)
 
 @instruction("!")
