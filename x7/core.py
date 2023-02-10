@@ -160,9 +160,11 @@ def run_inst(f, s, blocks, og_i):
     def func(state):
         state.last_popped.append([])
         try:
-            f(state, *blocks)
+            r = f(state, *blocks)
         except Raise as r:
             raise RaiseInfo(r.reason, s, og_i, state)
+        if r is not None:
+            state.stack.append(r)
         state.last_popped.pop()
     func.__name__ = f.__name__
     func.__qualname__ = f.__qualname__
@@ -371,23 +373,23 @@ def flatten_view(v):
 @instruction("+")
 def add(state):
     x, y = get_types(state, Fraction, Fraction)
-    state.stack.append(x + y)
+    return x + y
 
 @instruction("-")
 def sub(state):
     x, y = get_types(state, Fraction, Fraction)
-    state.stack.append(x - y)
+    return x - y
 
 @instruction("*")
 def mul(state):
     x, y = get_types(state, Fraction, Fraction)
-    state.stack.append(x * y)
+    return x * y
 
 @instruction("D")
 def true_div(state):
     x, y = get_types(state, Fraction, Fraction)
     try:
-        state.stack.append(x / y)
+        return x / y
     except ZeroDivisionError:
         raise Raise("division by zero")
 
@@ -397,7 +399,7 @@ def int_div(state):
     assert_int(x)
     assert_int(y)
     try:
-        state.stack.append(Fraction(x // y))
+        return Fraction(x // y)
     except ZeroDivisionError:
         raise Raise("division by zero")
 
@@ -407,79 +409,91 @@ def int_mod(state):
     assert_int(x)
     assert_int(y)
     try:
-        state.stack.append(Fraction(x % y))
+        return Fraction(x % y)
     except ZeroDivisionError:
         raise Raise("modulo by zero")
 
 @instruction("N")
 def negate(state):
     x, = get_types(state, Fraction)
-    state.stack.append(-x)
+    return -x
 
 @instruction("J")
 def floor(state):
     x, = get_types(state, Fraction)
-    state.stack.append(math.floor(x))
+    return math.floor(x)
 
 @instruction("K")
 def ceil(state):
     x, = get_types(state, Fraction)
-    state.stack.append(math.ceil(x))
+    return math.ceil(x)
 
 @instruction("<")
 def lt(state):
     x, y = get_types(state, None, None)
+    if not compatible(typeof(x), typeof(y)):
+        raise Raise("type error")
     if not x < y:
         raise Raise("assertion failed")
 
 @instruction("L")
 def le(state):
     x, y = get_types(state, None, None)
+    if not compatible(typeof(x), typeof(y)):
+        raise Raise("type error")
     if not x <= y:
         raise Raise("assertion failed")
 
 @instruction("=")
 def eq(state):
     x, y = get_types(state, None, None)
+    if not compatible(typeof(x), typeof(y)):
+        raise Raise("type error")
     if not x == y:
         raise Raise("assertion failed")
 
 @instruction("/")
 def ne(state):
     x, y = get_types(state, None, None)
+    if not compatible(typeof(x), typeof(y)):
+        raise Raise("type error")
     if not x != y:
         raise Raise("assertion failed")
 
 @instruction("G")
 def ge(state):
     x, y = get_types(state, None, None)
+    if not compatible(typeof(x), typeof(y)):
+        raise Raise("type error")
     if not x >= y:
         raise Raise("assertion failed")
 
 @instruction(">")
 def gt(state):
     x, y = get_types(state, None, None)
+    if not compatible(typeof(x), typeof(y)):
+        raise Raise("type error")
     if not x > y:
         raise Raise("assertion failed")
 
 @instruction("b")
 def unbox(state):
     x, = get_types(state, Box)
-    state.stack.append(x.val)
+    return x.val
 
 @instruction("B")
 def box(state):
     x, = get_types(state, None)
-    state.stack.append(Box(x))
+    return Box(x)
 
 @instruction(",")
 def pair(state):
     x, y = get_types(state, None, None)
-    state.stack.append((x, y))
+    return (x, y)
 
 @instruction("[")
 def empty(state):
-    state.stack.append([])
+    return []
 
 @instruction(".")
 def concat(state):
@@ -495,27 +509,27 @@ def concat(state):
             x = [x, y]
         case _:
             raise Raise("types incompatible")
-    state.stack.append(x)
+    return x
 
 @instruction("i")
 def iota(state):
     n, = get_types(state, Fraction)
-    state.stack.append([Fraction(x) for x in range(assert_nonneg_int(n))])
+    return [Fraction(x) for x in range(assert_nonneg_int(n))]
 
 @instruction("h")
 def head(state):
     v = get_view(state, (None, None), drill=TO_SINGLE)
-    state.stack.append(View([x[0] for x in v.xs], lambda ys: v.assign([(y, x[1]) for x, y in zip(v.xs, ys)]), max(v.depth, TOP_PAIR)))
+    return View([x[0] for x in v.xs], lambda ys: v.assign([(y, x[1]) for x, y in zip(v.xs, ys)]), max(v.depth, TOP_PAIR))
 
 @instruction("t")
 def tail(state):
     v = get_view(state, (None, None), drill=TO_SINGLE)
-    state.stack.append(View([x[1] for x in v.xs], lambda ys: v.assign([(x[0], y) for x, y in zip(v.xs, ys)]), max(v.depth, TOP_PAIR)))
+    return View([x[1] for x in v.xs], lambda ys: v.assign([(x[0], y) for x, y in zip(v.xs, ys)]), max(v.depth, TOP_PAIR))
 
 @instruction("j")
 def join(state):
     v = get_view(state, List(None), drill=NEVER)
-    state.stack.append(flatten_view(v))
+    return flatten_view(v)
 
 @instruction("n")
 def nth(state):
@@ -529,7 +543,7 @@ def nth(state):
             del xs[i]
         return xs
     try:
-        state.stack.append(View([x[i] for x in v.xs], lambda ys: v.assign([assign(x, y) for x, y in zip(v.xs, ys)]), DEEP))
+        return View([x[i] for x in v.xs], lambda ys: v.assign([assign(x, y) for x, y in zip(v.xs, ys)]), max(v.depth, SINGLE))
     except IndexError:
         raise Raise("index out of bounds")
 
@@ -542,7 +556,7 @@ def select(state):
             xs[i.numerator] = y
         return [x for x in xs if x is not None]
     try:
-        state.stack.append(View([x[assert_nonneg_int(i)] for x in v.xs for i in ixs], lambda ys: v.assign([assign_many(x, ys[j:j+len(ixs)]) for x, j in zip(v.xs, range(0, len(ys), len(ixs)))]), DEEP))
+        return View([x[assert_nonneg_int(i)] for x in v.xs for i in ixs], lambda ys: v.assign([assign_many(x, ys[j:j+len(ixs)]) for x, j in zip(v.xs, range(0, len(ys), len(ixs)))]), DEEP)
     except IndexError:
         raise Raise("index out of bounds")
 
@@ -559,41 +573,41 @@ def where(state, block):
             xs.append(x)
         else:
             ixs.append(None)
-    state.stack.append(View(xs, lambda ys: v.assign([ys[j] if j is not None else v.xs[i] for i, j in enumerate(ixs)]), v.depth))
+    return View(xs, lambda ys: v.assign([ys[j] if j is not None else v.xs[i] for i, j in enumerate(ixs)]), v.depth)
 
 @instruction("u")
 def u_turn(state):
-    v = get_view(state,  drill=FROM_SINGLE)
-    state.stack.append(View(v.xs[::-1], lambda xs: v.assign(xs[::-1]), v.depth))
+    v = get_view(state, drill=FROM_SINGLE)
+    return View(v.xs[::-1], lambda xs: v.assign(xs[::-1]), v.depth)
 
 @instruction("@")
 def only(state):
     v = get_view(state, drill=FROM_TOP)
     if len(v.xs) != 1:
         raise Raise("wrong number of elements in view")
-    state.stack.append(v.xs[0])
+    return v.xs[0]
 
 @instruction("]")
 def enlist(state):
     v = get_view(state, drill=NEVER)
-    state.stack.append(v.xs)
+    return v.xs
 
 @instruction("$")
 def set(state):
     x, = get_types(state, None)
     v = get_view(state, drill=FROM_TOP)
-    state.stack.append(v.assign([copy.copy(x) for _ in range(len(v.xs))]))
+    return v.assign([copy.copy(x) for _ in range(len(v.xs))])
 
 @instruction("X")
 def eighty_six(state):
     v = get_view(state, drill=FROM_TOP_PAIR)
-    state.stack.append(v.assign([None] * len(v.xs)))
+    return v.assign([None] * len(v.xs))
 
 @instruction("P")
 def paste(state):
     b = get_view(state, drill=FROM_TOP_PAIR)
     a = get_view(state, drill=FROM_TOP_PAIR)
-    state.stack.append(a.assign(b.xs + [None]*(len(a.xs)-len(b.xs))))
+    return a.assign(b.xs + [None]*(len(a.xs)-len(b.xs)))
 
 @instruction("M")
 def map(state, block):
@@ -611,7 +625,7 @@ def map(state, block):
                 res.append(y)
         else:
             res.append(None)
-    state.stack.append(v.assign(res))
+    return v.assign(res)
 
 @instruction("Z")
 def zip_with(state, block):
@@ -632,7 +646,7 @@ def zip_with(state, block):
         else:
             res.append(None)
     res.extend([None]*(len(a.xs)-len(res)))
-    state.stack.append(a.assign(res))
+    return a.assign(res)
 
 @instruction("E")
 def each(state, block):
