@@ -575,11 +575,6 @@ def where(state, block):
             ixs.append(None)
     return View(xs, lambda ys: v.assign([ys[j] if j is not None else v.xs[i] for i, j in enumerate(ixs)]), v.depth)
 
-@instruction("u")
-def u_turn(state):
-    v = get_view(state, drill=FROM_SINGLE)
-    return View(v.xs[::-1], lambda xs: v.assign(xs[::-1]), v.depth)
-
 @instruction("@")
 def only(state):
     v = get_view(state, drill=FROM_TOP)
@@ -591,6 +586,11 @@ def only(state):
 def enlist(state):
     v = get_view(state, drill=NEVER)
     return v.xs
+
+@instruction("c")
+def count(state):
+    v = get_view(state, drill=FROM_SINGLE)
+    return Fraction(len(v.xs))
 
 @instruction("$")
 def set(state):
@@ -608,6 +608,11 @@ def paste(state):
     b = get_view(state, drill=FROM_TOP_PAIR)
     a = get_view(state, drill=FROM_TOP_PAIR)
     return a.assign(b.xs + [None]*(len(a.xs)-len(b.xs)))
+
+@instruction("u")
+def u_turn(state):
+    v = get_view(state, drill=FROM_SINGLE)
+    return v.assign(v.xs[::-1])
 
 @instruction("M")
 def map(state, block):
