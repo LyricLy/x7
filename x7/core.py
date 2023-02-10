@@ -411,6 +411,11 @@ def int_mod(state):
     except ZeroDivisionError:
         raise Raise("modulo by zero")
 
+@instruction("N")
+def negate(state):
+    x, = get_types(state, Fraction)
+    state.stack.append(-x)
+
 @instruction("J")
 def floor(state):
     x, = get_types(state, Fraction)
@@ -530,8 +535,8 @@ def nth(state):
 
 @instruction("s")
 def select(state):
-    ixs = get_view(state, drill=FROM_SINGLE).xs
-    v = get_view(state, drill=NEVER)
+    ixs = get_view(state, Fraction, drill=FROM_SINGLE).xs
+    v = get_view(state, List(None), drill=NEVER)
     def assign_many(xs, ys):
         for i, y in zip(ixs, ys):
             xs[i.numerator] = y
