@@ -528,7 +528,7 @@ def tail(state):
 
 @instruction("j")
 def join(state):
-    v = get_view(state, List(None), drill=NEVER)
+    v = get_view(state, List(None), drill=FROM_TOP)
     return flatten_view(v)
 
 @instruction("n")
