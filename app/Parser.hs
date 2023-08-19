@@ -67,7 +67,7 @@ elaborate fs = let
     seqEither_ sequence_ .
     map \(SpanInst x pos) -> deSpan pos <$> case x of
       Pure f -> Right f
-      Call n -> case fs' ^? ix n of
+      Call n -> case fs' ^? ix (n-1) of
         Just (Right f) -> Right f
         Nothing -> Left
           [Err Nothing ("function " ++ show n ++ " is not defined")
