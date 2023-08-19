@@ -1,0 +1,34 @@
+cabal-version:      3.0
+name:               x7
+version:            0.2.0
+synopsis:           The exceptional golfing language
+homepage:           https://github.com/LyricLy/x7
+license:            MIT
+license-file:       LICENSE
+author:             Christina Hanson
+maintainer:         christinahansondesu@gmail.com
+category:           Language
+build-type:         Simple
+
+common warnings
+    ghc-options: -Wall -Wno-orphans
+
+executable x7
+    import: warnings
+    main-is: Main.hs
+    other-modules: State, Parser
+    build-depends:
+        base ^>=4.16.4.0,
+        containers ^>=0.6.7,
+        lens ^>=5.2,
+        mtl ^>=2.3.1,
+        megaparsec ^>=9.4.1,
+        diagnose ^>=2.5.1,
+        optparse-applicative ^>=0.18.1.0,
+    hs-source-dirs: app
+    default-language: GHC2021
+    default-extensions:
+        LambdaCase,
+        TemplateHaskell,
+        ViewPatterns,
+        BlockArguments,
