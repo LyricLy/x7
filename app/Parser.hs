@@ -40,6 +40,7 @@ o c r = Pure r <$ char c
 inst :: Parser Inst
 inst = intLit <|> varSet <|> try varGet <|> funCall
   <|> o '+' (op2 drillAtom $ through2' _Rat (+))
+  <?> "an instruction"
 
 func :: Parser [SpanInst]
 func = hspace >> many do

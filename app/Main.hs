@@ -5,8 +5,10 @@ import Data.Void
 import Error.Diagnose
 import Error.Diagnose.Compat.Megaparsec
 import System.Exit
+import System.IO
 import Options.Applicative
 import Text.Megaparsec
+import Prettyprinter.Render.Text
 import State
 import Parser hiding (Parser)
 
@@ -23,7 +25,12 @@ opts :: ParserInfo Opts
 opts = info (opts' <**> helper) (fullDesc <> progDesc "Execute FILE" <> header "x7, the exceptional golfing language")
 
 printDiag :: Diagnostic String -> IO ()
-printDiag = printDiagnostic stderr WithUnicode (TabSize 4) defaultStyle
+printDiag d = do
+  tty <- hIsTerminalDevice stderr
+  if tty then
+    printDiagnostic stderr WithUnicode (TabSize 4) defaultStyle d
+  else
+    hPutDoc stderr $ prettyDiagnostic WithoutUnicode (TabSize 4) d
 
 main :: IO ()
 main = do

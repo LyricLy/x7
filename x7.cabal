@@ -25,6 +25,7 @@ executable x7
         megaparsec ^>=9.4.1,
         diagnose ^>=2.5.1,
         optparse-applicative ^>=0.18.1.0,
+        prettyprinter ^>=1.7.1,
     hs-source-dirs: app
     default-language: GHC2021
     default-extensions:
