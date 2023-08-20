@@ -5,6 +5,7 @@ import Control.Monad
 import Control.Lens
 import Data.Char
 import Data.Either
+import Data.List
 import Data.Void
 import Error.Diagnose
 import Text.Megaparsec
@@ -39,7 +40,7 @@ o c r = Pure r <$ char c
 
 inst :: Parser Inst
 inst = intLit <|> varSet <|> try varGet <|> funCall
-  <|> o '+' (op2 drillAtom $ through2' _Rat (+))
+  <|> o '+' (op2 drillAtom $ through2' _Rat \x y -> pure $ x + y)
   <?> "an instruction"
 
 func :: Parser [SpanInst]
@@ -53,24 +54,32 @@ func = hspace >> many do
 x7 :: Parser [[SpanInst]]
 x7 = [] <$ eof <|> liftA2 (:) (func <* (void eol <|> eof)) x7
 
-seqEither_ :: ([a] -> b) -> [Either [e] a] -> Either [e] b
+data ElaborationError = FuncNotDefined Position Int Int
+
+instance Eq ElaborationError where
+  (FuncNotDefined _ _ x) == (FuncNotDefined _ _ y) = x == y
+
+errorToReport :: ElaborationError -> Report String
+errorToReport = \case
+  FuncNotDefined pos l n -> let
+    msg
+      | l == 1 = "there is only one line in the file"
+      | otherwise = "there are only " ++ show l ++ " lines in the file"
+    in Err Nothing ("function " ++ show n ++ " is not defined") [(pos, This msg)] []
+
+seqEither_ :: ([a] -> b) -> [Either [ElaborationError] a] -> Either [ElaborationError] b
 seqEither_ f (partitionEithers -> (es, xs))
   | null es = Right (f xs)
-  | otherwise = Left (concat es)
+  | otherwise = Left . nub $ concat es
 
 elaborate :: [[SpanInst]] -> Either [Report String] (X7 ())
 elaborate fs = let
-  msg
-    | length fs == 1 = "there is only one line in the file"
-    | otherwise = "there are only " ++ show (length fs) ++ " lines in the file"
   fs' = fs <&>
     seqEither_ sequence_ .
     map \(SpanInst x pos) -> deSpan pos <$> case x of
       Pure f -> Right f
       Call n -> case fs' ^? ix (n-1) of
         Just (Right f) -> Right f
-        Nothing -> Left
-          [Err Nothing ("function " ++ show n ++ " is not defined")
-               [(pos, This msg)] []]
+        Nothing -> Left [FuncNotDefined pos (length fs) n]
         _ -> Left []
-  in seqEither_ last fs'
+  in seqEither_ last fs' & _Left %~ map errorToReport

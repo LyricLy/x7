@@ -167,12 +167,12 @@ drillAtom x = pure x
 op :: Drill -> (Value -> X7 Value) -> X7 ()
 op drill f = popView >>= drill >>= focused %%~ f >>= pushView . unfocus
 
-through :: Traversal' Value a -> Review Value b -> (a -> b) -> (Value -> X7 Value)
+through :: Traversal' Value a -> Review Value b -> (a -> X7 b) -> (Value -> X7 Value)
 through a b f x = case f <$> x^?a of
-  Just r -> pure $ b # r
+  Just r -> review b <$> r
   Nothing -> typeError
 
-through' :: Prism' Value a -> (a -> a) -> (Value -> X7 Value)
+through' :: Prism' Value a -> (a -> X7 a) -> (Value -> X7 Value)
 through' p f = through p p f
 
 op2 :: Drill -> (Value -> Value -> X7 Value) -> X7 ()
@@ -186,13 +186,13 @@ op2 drill f = do
   pushView (unfocus r)
   pure ()
 
-through2 :: Traversal' Value a -> Traversal' Value b -> Review Value c -> (a -> b -> c) -> (Value -> Value -> X7 Value)
+through2 :: Traversal' Value a -> Traversal' Value b -> Review Value c -> (a -> b -> X7 c) -> (Value -> Value -> X7 Value)
 through2 a b c f x y =
   case f <$> x^?a <*> y^?b of
-    Just r -> pure $ c # r
+    Just r -> review c <$> r
     Nothing -> typeError
 
-through2' :: Prism' Value a -> (a -> a -> a) -> (Value -> Value -> X7 Value)
+through2' :: Prism' Value a -> (a -> a -> X7 a) -> (Value -> Value -> X7 Value)
 through2' p f = through2 p p p f
 
 runX7 :: X7 () -> Either Raise Place
