@@ -6,6 +6,7 @@ import Control.Lens hiding (op, List)
 import Data.Char
 import Data.Either
 import Data.List
+import Data.Maybe
 import Data.Void
 import Error.Diagnose
 import Text.Megaparsec
@@ -63,6 +64,9 @@ inst = intLit <|> varSet <|> try varGet <|> funCall
   <|> o '.' (op2 pure \x y -> maybe typeError pure (dot x y))
   <|> o ']' (op pure $ pure . List . pure)
   <|> o 'i' (op drillAtom $ through _PosInt id \n -> pure . List $ fmap (Rat . fromIntegral) [0..n-1])
+  <|> o 'h' (opTic drillAtom Static $ through _Pair _Pair $ \(x, y) -> pure (Focused x, noFocus y))
+  <|> o 't' (opTic drillAtom Static $ through _Pair _Pair $ \(x, y) -> pure (Focused x, noFocus y))
+  <|> o 'j' (popView >>= maybe typeError pure . flatten >>= pushView)
   <?> "an instruction"
 
 sc :: Parser ()
@@ -107,4 +111,4 @@ elaborate fs = let
         Just (Right f) -> Right f
         Nothing -> Left [FuncNotDefined pos (length fs) n]
         _ -> Left []
-  in seqEither_ last fs' & _Left %~ map errorToReport
+  in seqEither_ (fromMaybe (pure ()) . preview _last) fs' & _Left %~ map errorToReport

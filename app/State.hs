@@ -156,11 +156,14 @@ pushView = pushGroup . pure
 focused :: Traversal' View Value
 focused = val . biplate
 
+noFocus :: Value -> FocusedValue
+noFocus = fmap absurd
+
 unfocus :: View -> View
 unfocus = ofValue . unfocusValue . view val
   where
     unfocusValue = fmap undefined . transform \case
-      Focused x -> fmap absurd x
+      Focused x -> noFocus x
       x -> x
 
 focus :: Monad m => (Value -> m FocusedValue) -> View -> m View
@@ -175,6 +178,9 @@ deepen l = depth %~ \case
 
 focus' :: Depth -> (Value -> X7 FocusedValue) -> View -> X7 View
 focus' d f v = deepen d <$> focus f v
+
+opTic :: Drill -> Depth -> (Value -> X7 FocusedValue) -> X7 ()
+opTic drill d f = popView >>= drill >>= focus' d f >>= pushView
 
 flatten :: View -> Maybe View
 flatten = depth._2 .~ True <&> focus \case
@@ -194,7 +200,7 @@ drillAtom x = pure x
 op :: Drill -> (Value -> X7 Value) -> X7 ()
 op drill f = popView >>= drill >>= focused %%~ f >>= pushView . unfocus
 
-through :: Traversal' Value a -> Review Value b -> (a -> X7 b) -> (Value -> X7 Value)
+through :: Traversal' Value a -> Review c b -> (a -> X7 b) -> (Value -> X7 c)
 through a b f x = case f <$> x^?a of
   Just r -> review b <$> r
   Nothing -> typeError
