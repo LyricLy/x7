@@ -2,7 +2,7 @@ module Parser where
 
 import Control.Applicative (liftA2)
 import Control.Monad
-import Control.Lens
+import Control.Lens hiding (op)
 import Data.Char
 import Data.Either
 import Data.List
@@ -41,18 +41,39 @@ o c r = Pure r <$ char c
 inst :: Parser Inst
 inst = intLit <|> varSet <|> try varGet <|> funCall
   <|> o '+' (op2 drillAtom $ through2' _Rat \x y -> pure $ x + y)
+  <|> o '-' (op2 drillAtom $ through2' _Rat \x y -> pure $ x - y)
+  <|> o '*' (op2 drillAtom $ through2' _Rat \x y -> pure $ x * y)
+  <|> o 'Q' (op2 drillAtom $ through2' _Integer \x y ->
+    if y == 0 then raise "division by zero" else pure $ x `div` y)
+  <|> o 'R' (op2 drillAtom $ through2' _Integer \x y ->
+    if y == 0 then raise "modulo by zero" else pure $ x `rem` y)
+  <|> o 'D' (op2 drillAtom $ through2' _Rat \x y ->
+    if y == 0 then raise "division by zero" else pure $ x / y)
+  <|> o 'N' (op drillAtom $ through' _Rat $ pure . negate)
+  <|> o 'J' (op drillAtom $ through' _Rat $ pure . fromIntegral @Integer . floor)
+  <|> o 'K' (op drillAtom $ through' _Rat $ pure . fromIntegral @Integer . ceiling)
+  <|> o '<' (comparison (<))
+  <|> o 'G' (comparison (>=))
+  <|> o '=' (comparison (==))
+  <|> o '/' (comparison (/=))
+  <|> o '>' (comparison (>))
+  <|> o 'L' (comparison (<=))
+  <|> o ',' (op2 pure \x y -> pure $ Pair (x, y))
   <?> "an instruction"
 
+sc :: Parser ()
+sc = hidden hspace
+
 func :: Parser [SpanInst]
-func = hspace >> many do
+func = sc >> many do
   SourcePos f row1 col1 <- getSourcePos
   i <- inst
   SourcePos _ row2 col2 <- getSourcePos
-  hspace
+  sc
   pure . SpanInst i $ Position (unPos row1, unPos col1) (unPos row2, unPos col2) f
 
 x7 :: Parser [[SpanInst]]
-x7 = [] <$ eof <|> liftA2 (:) (func <* (void eol <|> eof)) x7
+x7 = [] <$ eof <|> liftA2 (:) (func <* (void newline <|> eof)) x7
 
 data ElaborationError = FuncNotDefined Position Int Int
 

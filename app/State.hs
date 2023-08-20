@@ -20,39 +20,50 @@ import Error.Diagnose
 showRat :: Rational -> String
 showRat n
   | b == 0 = whole
-  | otherwise = whole ++ '.' : fst (go b [])
+  | Just (r, _) <- go b [] = whole ++ '.' : r
+  | otherwise = (if a /= 0 then (whole++) . ('+':) else id) $ show b ++ '/' : show (denominator n)
   where
     split = flip divMod (denominator n)
     (a, b) = split . abs $ numerator n
     whole = (if n < 0 then ('-':) else id) (show a)
-    go 0 _ = ("", Nothing)
-    go v p =
-      let (q, r) = split (v * 10)
-          p' = v : p
-          (x, k)
-            | r `elem` p' = ("", Just r)
-            | otherwise = go r (v : p)
-          x' = intToDigit (fromIntegral q) : x
-          x''
-            | k == Just v = "(" ++ x' ++ ")"
-            | otherwise = x'
-      in (x'', k)
+    go 0 _ = Just ("", Nothing)
+    go v p
+      | length p == 20 = Nothing
+      | otherwise =
+        let (q, r) = split (v * 10)
+            p' = v : p
+        in do
+          (x, k) <- if r `elem` p' then Just ("", Just r) else go r p'
+          let x' = intToDigit (fromIntegral q) : x
+          let x'' = if k == Just v then "(" ++ x' ++ ")" else x'
+          pure (x'', k)
 
 data ValueOf a
   = Rat Rational
   | Box (ValueOf a)
   | Pair (ValueOf a, ValueOf a)
-  | List { _list :: Seq (ValueOf a) }
+  | List (Seq (ValueOf a))
   | Focused a
   deriving (Data, Functor)
 makeLenses ''ValueOf
 makePrisms ''ValueOf
 
-_Integer :: Prism' Value Integer
-_Integer = _Rat . prism' fromIntegral \x -> if denominator x == 1 then Just (numerator x) else Nothing 
-
 type Value = ValueOf Void
 type FocusedValue = ValueOf Value
+
+fallthrough :: Ordering -> Ordering -> Ordering
+fallthrough EQ x = x
+fallthrough x _ = x
+
+valCmp :: Value -> Value -> Maybe Ordering
+valCmp (Rat x) (Rat y) = Just $ compare x y
+valCmp (Box x) (Box y) = valCmp x y
+valCmp (Pair (x1, x2)) (Pair (y1, y2)) = fallthrough <$> valCmp x1 y1 <*> valCmp x2 y2
+valCmp (List xs) (List ys) = foldr fallthrough EQ <$> zipWithM valCmp (toList xs) (toList ys)
+valCmp _ _ = Nothing
+
+_Integer :: Prism' Value Integer
+_Integer = _Rat . prism' fromIntegral \x -> if denominator x == 1 then Just (numerator x) else Nothing 
 
 instance Plated FocusedValue
 
@@ -66,7 +77,9 @@ data Place = Place {_stack :: Stack, _vars :: Map Char View}
 makeLenses ''Place
 
 instance Show a => Show (ValueOf a) where
-  show (Rat v) = showRat v
+  show (Rat v) = let (s, r) = splitAt 20 (showRat v) in
+    if null r then s
+    else show (numerator v) ++ "/" ++ show (denominator v)
   show (Box v) = '&' : show v
   show (Pair v) = show v
   show (List v) = show (toList v)
@@ -175,16 +188,22 @@ through a b f x = case f <$> x^?a of
 through' :: Prism' Value a -> (a -> X7 a) -> (Value -> X7 Value)
 through' p f = through p p f
 
-op2 :: Drill -> (Value -> Value -> X7 Value) -> X7 ()
-op2 drill f = do
+type Traversoid f a b = LensLike' f View [Value] -> ([Value] -> X7 [a]) -> View -> X7 b
+
+op2' :: Functor f => Traversoid f a b -> Drill -> (Value -> Value -> X7 a) -> X7 b
+op2' z drill f = do
   let v = popView >>= drill
   y <- v
   x <- v
   let foc = y^..focused
   when (null foc) (raise "rhs has nothing in focus")
-  r <- x & partsOf focused %%~ flip (zipWithM f) (cycle foc)
-  pushView (unfocus r)
-  pure ()
+  x & z (partsOf focused) (flip (zipWithM f) (cycle foc))
+
+op2 :: Drill -> (Value -> Value -> X7 Value) -> X7 ()
+op2 d f = op2' id d f >>= pushView . unfocus
+
+op2_ :: Drill -> (Value -> Value -> X7 a) -> X7 ()
+op2_ = op2' traverseOf_
 
 through2 :: Traversal' Value a -> Traversal' Value b -> Review Value c -> (a -> b -> X7 c) -> (Value -> Value -> X7 Value)
 through2 a b c f x y =
@@ -194,6 +213,11 @@ through2 a b c f x y =
 
 through2' :: Prism' Value a -> (a -> a -> X7 a) -> (Value -> Value -> X7 Value)
 through2' p f = through2 p p p f
+
+comparison :: (Ordering -> Ordering -> Bool) -> X7 ()
+comparison f = op2_ pure \x y -> case valCmp x y of
+  Nothing -> raise "type error"
+  Just e -> when (not $ f e EQ) $ raise "comparison failed"
 
 runX7 :: X7 () -> Either Raise Place
 runX7 x = runExcept (execStateT x (Place [] M.empty))
