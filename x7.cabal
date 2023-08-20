@@ -33,3 +33,4 @@ executable x7
         TemplateHaskell,
         ViewPatterns,
         BlockArguments,
+        OverloadedLists,

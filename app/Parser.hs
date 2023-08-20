@@ -2,7 +2,7 @@ module Parser where
 
 import Control.Applicative (liftA2)
 import Control.Monad
-import Control.Lens hiding (op)
+import Control.Lens hiding (op, List)
 import Data.Char
 import Data.Either
 import Data.List
@@ -59,6 +59,10 @@ inst = intLit <|> varSet <|> try varGet <|> funCall
   <|> o '>' (comparison (>))
   <|> o 'L' (comparison (<=))
   <|> o ',' (op2 pure \x y -> pure $ Pair (x, y))
+  <|> o '[' (pushView . ofValue $ List mempty)
+  <|> o '.' (op2 pure \x y -> maybe typeError pure (dot x y))
+  <|> o ']' (op pure $ pure . List . pure)
+  <|> o 'i' (op drillAtom $ through _PosInt id \n -> pure . List $ fmap (Rat . fromIntegral) [0..n-1])
   <?> "an instruction"
 
 sc :: Parser ()

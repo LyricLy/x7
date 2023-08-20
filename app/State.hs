@@ -13,8 +13,9 @@ import Data.List
 import Data.List.NonEmpty (NonEmpty(..))
 import Data.Map (Map)
 import qualified Data.Map as M
+import Data.Maybe
 import Data.Void
-import Data.Sequence (Seq)
+import Data.Sequence (Seq, (!?), (><))
 import Error.Diagnose
 
 showRat :: Rational -> String
@@ -44,26 +45,39 @@ data ValueOf a
   | Pair (ValueOf a, ValueOf a)
   | List (Seq (ValueOf a))
   | Focused a
-  deriving (Data, Functor)
+  deriving (Data, Functor, Eq, Ord)
 makeLenses ''ValueOf
 makePrisms ''ValueOf
 
 type Value = ValueOf Void
 type FocusedValue = ValueOf Value
 
-fallthrough :: Ordering -> Ordering -> Ordering
-fallthrough EQ x = x
-fallthrough x _ = x
+sameType :: Value -> Value -> Bool
+sameType (Rat _) (Rat _) = True
+sameType (Box _) (Box _) = True
+sameType (Pair (x1, x2)) (Pair (y1, y2)) = sameType x1 y1 && sameType x2 y2
+sameType (List xs) (List ys) = fromMaybe True . listToMaybe $ zipWith sameType (toList xs) (toList ys)
+sameType _ _ = False
 
-valCmp :: Value -> Value -> Maybe Ordering
-valCmp (Rat x) (Rat y) = Just $ compare x y
-valCmp (Box x) (Box y) = valCmp x y
-valCmp (Pair (x1, x2)) (Pair (y1, y2)) = fallthrough <$> valCmp x1 y1 <*> valCmp x2 y2
-valCmp (List xs) (List ys) = foldr fallthrough EQ <$> zipWithM valCmp (toList xs) (toList ys)
-valCmp _ _ = Nothing
+maybeSameType :: Maybe Value -> Maybe Value -> Bool
+maybeSameType = (fromMaybe True .) . liftM2 sameType
+
+dot :: Value -> Value -> Maybe Value
+dot (List x) (List y)
+  | maybeSameType (x !? 0) (y !? 0) = Just $ List (x >< y)
+dot (List x) y
+  | maybeSameType (x !? 0) (Just y) = Just $ List (x |> y)
+dot x (List y)
+  | maybeSameType (Just x) (y !? 0) = Just $ List (x <| y)
+dot x y
+  | sameType x y = Just $ List [x, y]
+dot _ _ = Nothing
 
 _Integer :: Prism' Value Integer
 _Integer = _Rat . prism' fromIntegral \x -> if denominator x == 1 then Just (numerator x) else Nothing 
+
+_PosInt :: Prism' Value Int
+_PosInt = _Integer . prism' fromIntegral \x -> if x >= 0 then Just (fromIntegral x) else Nothing
 
 instance Plated FocusedValue
 
@@ -214,10 +228,10 @@ through2 a b c f x y =
 through2' :: Prism' Value a -> (a -> a -> X7 a) -> (Value -> Value -> X7 Value)
 through2' p f = through2 p p p f
 
-comparison :: (Ordering -> Ordering -> Bool) -> X7 ()
-comparison f = op2_ pure \x y -> case valCmp x y of
-  Nothing -> raise "type error"
-  Just e -> when (not $ f e EQ) $ raise "comparison failed"
+comparison :: (Value -> Value -> Bool) -> X7 ()
+comparison f = op2_ pure \x y ->
+  if not $ sameType x y then raise "type error"
+  else when (not $ f x y) $ raise "comparison failed"
 
 runX7 :: X7 () -> Either Raise Place
 runX7 x = runExcept (execStateT x (Place [] M.empty))
