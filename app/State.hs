@@ -17,6 +17,8 @@ import Data.Maybe
 import Data.Void
 import Data.Sequence (Seq, (!?), (><))
 import Error.Diagnose
+import Witherable.Lens
+import qualified Witherable.Lens.Withering as W
 
 showRat :: Rational -> String
 showRat n
@@ -48,6 +50,13 @@ data ValueOf a
   deriving (Data, Functor, Eq, Ord)
 makeLenses ''ValueOf
 makePrisms ''ValueOf
+
+instance Show a => Show (ValueOf a) where
+  show (Rat v) = showRat v
+  show (Box v) = '&' : show v
+  show (Pair v) = show v
+  show (List v) = show (toList v)
+  show (Focused v) = "<" ++ show v ++ ">"
 
 type Value = ValueOf Void
 type FocusedValue = ValueOf Value
@@ -82,7 +91,7 @@ _PosInt = _Integer . prism' fromIntegral \x -> if x >= 0 then Just (fromIntegral
 instance Plated FocusedValue
 
 data Depth = Top | Static | Single | Deep deriving (Show, Eq, Ord)
-data View = View {_val :: FocusedValue, _depth :: (Depth, Bool)}
+data View = View {_val :: FocusedValue, _depth :: Depth, _flattens :: Int, _negatedFlattens :: Int}
 makeLenses ''View
 type Group = NonEmpty View
 type Stack = [Group]
@@ -90,19 +99,8 @@ type Stack = [Group]
 data Place = Place {_stack :: Stack, _vars :: Map Char View}
 makeLenses ''Place
 
-instance Show a => Show (ValueOf a) where
-  show (Rat v) = let (s, r) = splitAt 20 (showRat v) in
-    if null r then s
-    else show (numerator v) ++ "/" ++ show (denominator v)
-  show (Box v) = '&' : show v
-  show (Pair v) = show v
-  show (List v) = show (toList v)
-  show (Focused v) = "<" ++ show v ++ ">"
-
 instance Show View where
-  show v = case v^.val of
-    Focused x -> show x
-    x -> show x
+  show = (show & outside _Focused .~ show) . view val
 
 instance Show Place where
   show p = unwords . map showGroup $ reverse (p^.stack)
@@ -123,7 +121,10 @@ raise :: String -> X7 a
 raise = throwError . Raise
 
 typeError :: X7 a
-typeError = raise "type error"
+typeError = raise "argument has unexpected type"
+
+typeCompatError :: X7 a
+typeCompatError = raise "arguments are of incompatible types"
 
 deSpan :: Position -> X7 () -> X7 ()
 deSpan p m = do
@@ -145,7 +146,7 @@ pushGroup :: Group -> X7 ()
 pushGroup g = stack %= (g:)
 
 ofValue :: Value -> View
-ofValue x = View (Focused x) (Top, False)
+ofValue x = View (Focused x) Top 0 0
 
 popView :: X7 View
 popView = popGroup >>= \(x:|xs) -> x <$ mapM_ pushView xs
@@ -153,18 +154,20 @@ popView = popGroup >>= \(x:|xs) -> x <$ mapM_ pushView xs
 pushView :: View -> X7 ()
 pushView = pushGroup . pure
 
+focusedV :: Traversal' FocusedValue Value
+focusedV = biplate
+
 focused :: Traversal' View Value
-focused = val . biplate
+focused = val . focusedV
 
-noFocus :: Value -> FocusedValue
-noFocus = fmap absurd
+unFocus :: Value -> FocusedValue
+unFocus = fmap absurd
 
-unfocus :: View -> View
-unfocus = ofValue . unfocusValue . view val
-  where
-    unfocusValue = fmap undefined . transform \case
-      Focused x -> noFocus x
-      x -> x
+rmFocus :: FocusedValue -> FocusedValue
+rmFocus = id & outside _Focused .~ unFocus
+
+defocus :: View -> View
+defocus = ofValue . fmap undefined . transform rmFocus . view val
 
 focus :: Monad m => (Value -> m FocusedValue) -> View -> m View
 focus f = val %%~ transformM \case
@@ -172,9 +175,9 @@ focus f = val %%~ transformM \case
   x -> pure x
 
 deepen :: Depth -> View -> View
-deepen l = depth %~ \case
-  (_, True) -> (Deep, True)
-  (v, _) -> (max l v, False)
+deepen l v
+  | v^.flattens - v^.negatedFlattens > 0 = v & depth .~ Deep
+  | otherwise = v & depth %~ max l
 
 focus' :: Depth -> (Value -> X7 FocusedValue) -> View -> X7 View
 focus' d f v = deepen d <$> focus f v
@@ -183,14 +186,17 @@ opTic :: Drill -> Depth -> (Value -> X7 FocusedValue) -> X7 ()
 opTic drill d f = popView >>= drill >>= focus' d f >>= pushView
 
 flatten :: View -> Maybe View
-flatten = depth._2 .~ True <&> focus \case
+flatten = flattens +~ 1 <&> focus \case
   List v -> Just (List (fmap Focused v))
   _ -> Nothing
+
+flatten' :: View -> X7 View
+flatten' = maybe (raise "argument is not list (can't drill)") pure . flatten
 
 type Drill = View -> X7 View
 
 drillFrom :: Depth -> Drill
-drillFrom d v = if v^.depth._1 <= d then maybe (raise "type error (can't drill)") pure (flatten v) else pure v
+drillFrom d v = if v^.depth <= d then flatten' v else pure v
 
 drillAtom :: Drill
 drillAtom x@(flatten -> Just v)
@@ -198,7 +204,7 @@ drillAtom x@(flatten -> Just v)
 drillAtom x = pure x
 
 op :: Drill -> (Value -> X7 Value) -> X7 ()
-op drill f = popView >>= drill >>= focused %%~ f >>= pushView . unfocus
+op drill f = popView >>= drill >>= focused %%~ f >>= pushView . defocus
 
 through :: Traversal' Value a -> Review c b -> (a -> X7 b) -> (Value -> X7 c)
 through a b f x = case f <$> x^?a of
@@ -220,7 +226,7 @@ op2' z drill f = do
   x & z (partsOf focused) (flip (zipWithM f) (cycle foc))
 
 op2 :: Drill -> (Value -> Value -> X7 Value) -> X7 ()
-op2 d f = op2' id d f >>= pushView . unfocus
+op2 d f = op2' id d f >>= pushView . defocus
 
 op2_ :: Drill -> (Value -> Value -> X7 a) -> X7 ()
 op2_ = op2' traverseOf_
@@ -236,8 +242,26 @@ through2' p f = through2 p p p f
 
 comparison :: (Value -> Value -> Bool) -> X7 ()
 comparison f = op2_ pure \x y ->
-  if not $ sameType x y then raise "type error"
+  if not $ sameType x y then typeCompatError
   else when (not $ f x y) $ raise "comparison failed"
+
+hunt :: Traversal' View (Seq FocusedValue)
+hunt f v = (val . _List . go (v^.flattens-1)) f v
+  where
+    go 0 = id
+    go n = traverse . biplate . go (n-1)
+
+type Withering s t a b = forall f. Applicative f => (a -> W.Withering f b) -> s -> f t
+type Withering' s a = Withering s s a a
+
+selectedOf :: Traversal' FocusedValue FocusedValue
+selectedOf = filtered (has focusedV)
+
+selected :: Withering' View Value
+selected = hunt . withered . selectedOf . focusedV
+
+indexView :: [Int] -> View -> Maybe View
+indexView is v = (v & hunt . elementsOf (traverse.selectedOf) (`notElem` is) %~ rmFocus) <$ mapM_ (\i -> v ^? hunt . elementOf (traverse.selectedOf) i) is
 
 runX7 :: X7 () -> Either Raise Place
 runX7 x = runExcept (execStateT x (Place [] M.empty))

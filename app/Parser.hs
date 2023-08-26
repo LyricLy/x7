@@ -4,9 +4,9 @@ import Control.Applicative (liftA2)
 import Control.Monad
 import Control.Lens hiding (op, List)
 import Data.Char
-import Data.Either
 import Data.List
 import Data.Maybe
+import Data.Validation
 import Data.Void
 import Error.Diagnose
 import Text.Megaparsec
@@ -61,12 +61,19 @@ inst = intLit <|> varSet <|> try varGet <|> funCall
   <|> o 'L' (comparison (<=))
   <|> o ',' (op2 pure \x y -> pure $ Pair (x, y))
   <|> o '[' (pushView . ofValue $ List mempty)
-  <|> o '.' (op2 pure \x y -> maybe typeError pure (dot x y))
+  <|> o '.' (op2 pure \x y -> maybe typeCompatError pure (dot x y))
   <|> o ']' (op pure $ pure . List . pure)
   <|> o 'i' (op drillAtom $ through _PosInt id \n -> pure . List $ fmap (Rat . fromIntegral) [0..n-1])
-  <|> o 'h' (opTic drillAtom Static $ through _Pair _Pair $ \(x, y) -> pure (Focused x, noFocus y))
-  <|> o 't' (opTic drillAtom Static $ through _Pair _Pair $ \(x, y) -> pure (Focused x, noFocus y))
-  <|> o 'j' (popView >>= maybe typeError pure . flatten >>= pushView)
+  <|> o 'h' (opTic drillAtom Static $ through _Pair _Pair $ \(x, y) -> pure (Focused x, unFocus y))
+  <|> o 't' (opTic drillAtom Static $ through _Pair _Pair $ \(x, y) -> pure (unFocus x, Focused y))
+  <|> o 'j' (popView >>= flatten' >>= pushView)
+  <|> o 'n' do
+    i <- popView >>= drillAtom
+    l <- popView >>= drillFrom Single
+    i' <- mapM (through _PosInt id pure) (i^..focused)
+    case indexView i' l of
+      Nothing -> raise "index out of bounds"
+      Just v -> pushView . deepen Single $ v & negatedFlattens +~ 1
   <?> "an instruction"
 
 sc :: Parser ()
@@ -96,19 +103,16 @@ errorToReport = \case
       | otherwise = "there are only " ++ show l ++ " lines in the file"
     in Err Nothing ("function " ++ show n ++ " is not defined") [(pos, This msg)] []
 
-seqEither_ :: ([a] -> b) -> [Either [ElaborationError] a] -> Either [ElaborationError] b
-seqEither_ f (partitionEithers -> (es, xs))
-  | null es = Right (f xs)
-  | otherwise = Left . nub $ concat es
-
 elaborate :: [[SpanInst]] -> Either [Report String] (X7 ())
 elaborate fs = let
   fs' = fs <&>
-    seqEither_ sequence_ .
+    (_Failure %~ nub) . fmap sequence_ . sequenceA .
     map \(SpanInst x pos) -> deSpan pos <$> case x of
-      Pure f -> Right f
+      Pure f -> Success f
       Call n -> case fs' ^? ix (n-1) of
-        Just (Right f) -> Right f
-        Nothing -> Left [FuncNotDefined pos (length fs) n]
-        _ -> Left []
-  in seqEither_ (fromMaybe (pure ()) . preview _last) fs' & _Left %~ map errorToReport
+        Just (Success f) -> Success f
+        Nothing -> Failure [FuncNotDefined pos (length fs) n]
+        _ -> Failure []
+  in case sequenceA fs' of
+    Success xs -> Right $ fromMaybe (pure ()) $ xs ^? _last
+    Failure rs -> Left $ map errorToReport rs
