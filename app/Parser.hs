@@ -68,18 +68,25 @@ inst = intLit <|> varSet <|> try varGet <|> funCall
   <|> o 't' (opTic drillAtom Static $ through _Pair _Pair $ \(x, y) -> pure (unFocus x, Focused y))
   <|> o 'j' (popView >>= flatten' >>= pushView)
   <|> o 'n' do
-      i <- popView >>= drillAtom
-      l <- popView
-      l' <- drillFrom SingleDeep l
-      i' <- mapM (through _PosInt id pure) (i^..focused)
-      case indexView notElem i' l' of
-        Nothing -> raise "index out of bounds"
-        Just v ->
-          let newDepth
-                | resolveDepth i >= Single = Deep
-                | resolveDepth l >= SingleDeep = SingleDeep
-                | otherwise = Single
-          in pushView $ depth .~ newDepth <&> flattened .~ False $ v
+    i <- popView >>= drillAtom
+    l <- popView
+    l' <- drillFrom SingleDeep l
+    i' <- mapM (through _PosInt id pure) (i^..focused)
+    case indexView notElem i' l' of
+      Nothing -> indexError
+      Just v ->
+        let newDepth
+              | resolveDepth i >= Single = Deep
+              | resolveDepth l >= SingleDeep = SingleDeep
+              | otherwise = Single
+        in pushView $ depth .~ newDepth <&> flattened .~ False $ v
+  <|> o 'u' do
+    i <- popView >>= drillAtom
+    l <- popView >>= drillFrom SingleDeep
+    i' <- mapM (through _PosInt id pure) (i^..focused)
+    case indexView elem i' l of
+      Nothing -> indexError
+      Just v -> pushView $ deepen Deep v
   <?> "an instruction"
 
 sc :: Parser ()

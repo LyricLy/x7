@@ -150,6 +150,9 @@ typeError = raise "argument has unexpected type"
 typeCompatError :: X7 a
 typeCompatError = raise "arguments are of incompatible types"
 
+indexError :: X7 a
+indexError = raise "index out of bounds"
+
 deSpan :: Position -> X7 () -> X7 ()
 deSpan p m = do
   s <- get
