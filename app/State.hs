@@ -90,8 +90,16 @@ _PosInt = _Integer . prism' fromIntegral \x -> if x >= 0 then Just (fromIntegral
 
 instance Plated FocusedValue
 
-data Depth = Top | Static | Single | Deep deriving (Show, Eq, Ord)
-data View = View {_val :: FocusedValue, _depth :: Depth, _flattens :: Int, _negatedFlattens :: Int}
+data Depth = Top | Static | Single | SingleDeep | Deep deriving (Eq, Ord)
+
+instance Show Depth where
+  show Top = "top"
+  show Static = "static"
+  show Single = "single"
+  show SingleDeep = "deep w/ single selections"
+  show Deep = "deep"
+
+data View = View {_val :: FocusedValue, _depth :: Depth, _flattened :: Bool}
 makeLenses ''View
 type Group = NonEmpty View
 type Stack = [Group]
@@ -106,19 +114,35 @@ instance Show Place where
   show p = unwords . map showGroup $ reverse (p^.stack)
     where showGroup xs = intercalate "$" . map show . reverse $ toList xs
 
-data Raise = Mask Raise | RaiseWithContext Position Place String | Raise String
+data RaiseData = RaiseData {_text :: String, _notes :: [String]}
+makeLenses ''RaiseData
+data Raise = Mask Raise | RaiseWithContext Position Place RaiseData | Raise RaiseData
 makePrisms ''Raise
 
 reportRaise :: Raise -> Report String
-reportRaise (Mask (reportRaise -> (Err f0 msg f1 f2))) = Err f0 (msg ++ "(masked)") f1 f2
-reportRaise (RaiseWithContext pos st t) = Err Nothing "instruction raised" [(pos, This t)] [Note note]
-  where note = let s = show st in if null s then "stack is empty" else "stack contents: " ++ s
-reportRaise _ = error "reportRaise: got plain Raise"
+reportRaise r = go r 0
+  where
+    go :: Raise -> Int -> Report String
+    go (Mask t) n = go t (n+1)
+    go (RaiseWithContext pos st (RaiseData t ns)) n =
+      let s = show st
+          note
+            | null s = "stack is empty"
+            | otherwise = "stack contents: " ++ s
+          masked
+            | n == 0 = ""
+            | n == 1 = " (masked)"
+            | otherwise = " (masked " ++ show n ++ " times)"
+      in Err Nothing ("instruction raised" ++ masked) [(pos, This t)] (map Note (note : ns))
+    go _ _ = error "reportRaise: got plain Raise"
 
 type X7 = StateT Place (Except Raise)
 
 raise :: String -> X7 a
-raise = throwError . Raise
+raise s = throwError $ Raise (RaiseData s [])
+
+addNote :: String -> X7 a -> X7 a
+addNote s = withError (_Raise.notes %~ (s:))
 
 typeError :: X7 a
 typeError = raise "argument has unexpected type"
@@ -146,7 +170,7 @@ pushGroup :: Group -> X7 ()
 pushGroup g = stack %= (g:)
 
 ofValue :: Value -> View
-ofValue x = View (Focused x) Top 0 0
+ofValue x = View (Focused x) Top False
 
 popView :: X7 View
 popView = popGroup >>= \(x:|xs) -> x <$ mapM_ pushView xs
@@ -164,10 +188,10 @@ unFocus :: Value -> FocusedValue
 unFocus = fmap absurd
 
 rmFocus :: FocusedValue -> FocusedValue
-rmFocus = id & outside _Focused .~ unFocus
+rmFocus = transform $ id & outside _Focused .~ unFocus
 
 defocus :: View -> View
-defocus = ofValue . fmap undefined . transform rmFocus . view val
+defocus = ofValue . fmap undefined . rmFocus . view val
 
 focus :: Monad m => (Value -> m FocusedValue) -> View -> m View
 focus f = val %%~ transformM \case
@@ -175,9 +199,12 @@ focus f = val %%~ transformM \case
   x -> pure x
 
 deepen :: Depth -> View -> View
-deepen l v
-  | v^.flattens - v^.negatedFlattens > 0 = v & depth .~ Deep
-  | otherwise = v & depth %~ max l
+deepen l v = v & depth .~ max (resolveDepth v) l
+
+resolveDepth :: View -> Depth
+resolveDepth v
+  | v^.flattened = Deep
+  | otherwise = v^.depth
 
 focus' :: Depth -> (Value -> X7 FocusedValue) -> View -> X7 View
 focus' d f v = deepen d <$> focus f v
@@ -186,17 +213,19 @@ opTic :: Drill -> Depth -> (Value -> X7 FocusedValue) -> X7 ()
 opTic drill d f = popView >>= drill >>= focus' d f >>= pushView
 
 flatten :: View -> Maybe View
-flatten = flattens +~ 1 <&> focus \case
+flatten = flattened .~ True <&> focus \case
   List v -> Just (List (fmap Focused v))
   _ -> Nothing
 
 flatten' :: View -> X7 View
-flatten' = maybe (raise "argument is not list (can't drill)") pure . flatten
+flatten' = maybe (raise "focus is not list (can't drill)") pure . flatten
 
 type Drill = View -> X7 View
 
 drillFrom :: Depth -> Drill
-drillFrom d v = if v^.depth <= d then flatten' v else pure v
+drillFrom d v
+  | v^.depth <= d = addNote ("instruction drills from " ++ show d ++ " and argument is at " ++ show (v^.depth)) $ flatten' v
+  | otherwise = pure v
 
 drillAtom :: Drill
 drillAtom x@(flatten -> Just v)
@@ -245,11 +274,18 @@ comparison f = op2_ pure \x y ->
   if not $ sameType x y then typeCompatError
   else when (not $ f x y) $ raise "comparison failed"
 
-hunt :: Traversal' View (Seq FocusedValue)
-hunt f v = (val . _List . go (v^.flattens-1)) f v
+-- wow this sucks!
+flattenCount :: Seq FocusedValue -> Int
+flattenCount = maybe 0 (1+) . minimumOf (traverse . failing (biplate . to flattenCount) (like (-1)))
+
+selectionLists :: Traversal' (Seq FocusedValue) (Seq FocusedValue)
+selectionLists f v = go (flattenCount v) f v
   where
     go 0 = id
     go n = traverse . biplate . go (n-1)
+
+hunt :: Traversal' View (Seq FocusedValue)
+hunt = val . _List . selectionLists
 
 type Withering s t a b = forall f. Applicative f => (a -> W.Withering f b) -> s -> f t
 type Withering' s a = Withering s s a a
@@ -260,8 +296,10 @@ selectedOf = filtered (has focusedV)
 selected :: Withering' View Value
 selected = hunt . withered . selectedOf . focusedV
 
-indexView :: [Int] -> View -> Maybe View
-indexView is v = (v & hunt . elementsOf (traverse.selectedOf) (`notElem` is) %~ rmFocus) <$ mapM_ (\i -> v ^? hunt . elementOf (traverse.selectedOf) i) is
+indexView :: (Int -> [Int] -> Bool) -> [Int] -> View -> Maybe View
+indexView e is v =
+  (v & hunt . elementsOf (traverse.selectedOf) (`e` is) %~ rmFocus)
+  <$ mapM_ (\i -> v ^? hunt . elementOf (traverse.selectedOf) i) is
 
 runX7 :: X7 () -> Either Raise Place
 runX7 x = runExcept (execStateT x (Place [] M.empty))
