@@ -1,0 +1,11 @@
+[book]
+authors = ["Christina Hanson"]
+language = "en"
+multilingual = false
+src = "src"
+title = "x7 Reference"
+
+[output.html]
+additional-js = ["theme/custom-highlight.js"]
+additional-css = ["theme/style.css"]
+mathjax-support = true

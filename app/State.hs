@@ -60,7 +60,7 @@ makePrisms ''ValueOf
 
 instance Show a => Show (ValueOf a) where
   show (Rat v) = showRat v
-  show (Box v) = '&' : show v
+  show (Box v) = '#' : show v
   show (Pair v) = show v
   show (List v) = show (toList v)
   show (Focused v) = "<" ++ show v ++ ">"
@@ -119,7 +119,7 @@ instance Show View where
 
 instance Show Place where
   show p = unwords . map showGroup $ reverse (p^.stack)
-    where showGroup xs = intercalate "$" . map show . reverse $ toList xs
+    where showGroup xs = intercalate "&" . map show . reverse $ toList xs
 
 data RaiseData = RaiseData {_text :: String, _notes :: [String]}
 makeLenses ''RaiseData
