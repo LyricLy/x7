@@ -24,11 +24,18 @@ showRat :: Rational -> String
 showRat n
   | b == 0 = whole
   | Just (r, _) <- go b [] = whole ++ '.' : r
-  | otherwise = (if a /= 0 then (whole++) . ('+':) else id) $ show b ++ '/' : show (denominator n)
+  | otherwise = whole' ++ show b ++ '/' : show (denominator n)
   where
     split = flip divMod (denominator n)
     (a, b) = split . abs $ numerator n
-    whole = (if n < 0 then ('-':) else id) (show a)
+    theMinus
+      | n < 0 = "-"
+      | otherwise = ""
+    whole = theMinus ++ show a
+    whole'
+      | a == 0 = theMinus
+      | n < 0 = whole ++ "-"
+      | otherwise = whole ++ "+"
     go 0 _ = Just ("", Nothing)
     go v p
       | length p == 20 = Nothing
