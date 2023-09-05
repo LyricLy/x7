@@ -30,7 +30,7 @@ hljs.registerLanguage("x7", (hljs) => ({
             contains: REPR,
             variants: [
                 {
-                    begin: /^>(?=(<<|[^\n<])*$)/,
+                    begin: /^>(?=[^\n<]*$)/,
                     contains: REPR,
                 },
                 {
@@ -38,7 +38,7 @@ hljs.registerLanguage("x7", (hljs) => ({
                     begin: /^>/,
                     contains: [
                         {
-                            scope: "target",
+                            scope: "meta",
                             begin: "<",
                             end: ">",
                             contains: REPR,

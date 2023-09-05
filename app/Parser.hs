@@ -15,8 +15,26 @@ import State
 
 type Parser = Parsec Void String
 
-data Inst = Pure (X7 ()) | Call Int
-data SpanInst = SpanInst Inst Position
+data ElaborationError = FuncNotDefined Position Int Int
+type Elaboration = Validation [ElaborationError] (X7 ())
+
+instance Eq ElaborationError where
+  (FuncNotDefined _ _ x) == (FuncNotDefined _ _ y) = x == y
+
+type Inst = Position -> SpanInst
+type SpanInst = [X7 ()] -> Elaboration
+
+attachSpan :: Inst -> Position -> SpanInst
+attachSpan i pos = fmap (deSpan pos) . i pos  
+
+pureInst :: X7 () -> Inst
+pureInst = const . const . pure
+
+callInst :: Int -> Inst
+callInst n pos fns =
+  case fns ^? ix (n-1) of
+    Just x -> Success x
+    Nothing -> Failure [FuncNotDefined pos (length fns) n]
 
 nonDigitChar :: Parser Char
 nonDigitChar = satisfy (not . isDigit) <?> "non-digit"
@@ -25,19 +43,19 @@ nonZeroDec :: Parser Int
 nonZeroDec = read <$> liftA2 (:) (satisfy (liftA2 (&&) (/='0') isDigit)) (many digitChar) <?> "nonzero number"
 
 intLit :: Parser Inst
-intLit = Pure . pushView . ofValue . Rat . fromIntegral <$> (0 <$ char '0' <|> nonZeroDec)
+intLit = pureInst . pushView . ofValue . Rat . fromIntegral <$> (0 <$ char '0' <|> nonZeroDec)
 
 varGet :: Parser Inst
-varGet = char ';' >> Pure . (>>= pushView) . getVar <$> nonDigitChar
+varGet = char ';' >> pureInst . (>>= pushView) . getVar <$> nonDigitChar
 
 varSet :: Parser Inst
-varSet = char ':' >> Pure . (popView >>=)  . setVar <$> nonDigitChar
+varSet = char ':' >> pureInst . (popView >>=)  . setVar <$> nonDigitChar
 
 funCall :: Parser Inst
-funCall = char ';' >> Call <$> nonZeroDec
+funCall = char ';' >> callInst <$> nonZeroDec
 
 o :: Char -> X7 () -> Parser Inst
-o c r = Pure r <$ char c
+o c r = pureInst r <$ char c
 
 inst :: Parser Inst
 inst = intLit <|> varSet <|> try varGet <|> funCall
@@ -98,15 +116,10 @@ func = sc >> many do
   i <- inst
   SourcePos _ row2 col2 <- getSourcePos
   sc
-  pure . SpanInst i $ Position (unPos row1, unPos col1) (unPos row2, unPos col2) f
+  pure . attachSpan i $ Position (unPos row1, unPos col1) (unPos row2, unPos col2) f
 
 x7 :: Parser [[SpanInst]]
 x7 = [] <$ eof <|> liftA2 (:) (func <* (void newline <|> eof)) x7
-
-data ElaborationError = FuncNotDefined Position Int Int
-
-instance Eq ElaborationError where
-  (FuncNotDefined _ _ x) == (FuncNotDefined _ _ y) = x == y
 
 errorToReport :: ElaborationError -> Report String
 errorToReport = \case
@@ -118,14 +131,7 @@ errorToReport = \case
 
 elaborate :: [[SpanInst]] -> Either [Report String] (X7 ())
 elaborate fs = let
-  fs' = fs <&>
-    (_Failure %~ nub) . fmap sequence_ . sequenceA .
-    map \(SpanInst x pos) -> deSpan pos <$> case x of
-      Pure f -> Success f
-      Call n -> case fs' ^? ix (n-1) of
-        Just (Success f) -> Success f
-        Nothing -> Failure [FuncNotDefined pos (length fs) n]
-        _ -> Failure []
+  fs' = fs <&> (_Failure %~ nub) . fmap sequence_ . sequenceA . map ($ map (validation undefined id) fs')
   in case sequenceA fs' of
     Success xs -> Right $ fromMaybe (pure ()) $ xs ^? _last
     Failure rs -> Left $ map errorToReport rs

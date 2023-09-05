@@ -44,11 +44,7 @@ By default, only the last line in a x7 file is executed. (It acts as an entry po
 1 2;1
 > 1 2 3 4
 ```
-You can call any line (including the main line) any number of times, and they may recurse. Note that infinite recursion may be detected by Haskell, which the interpreter is written in, causing the program to exit:
-```x7
-;1
-> x7: <<loop>>
-```
+You can call any line (including the main line) any number of times, and they may recurse.
 
 ### Blocks
 Some instructions take *blocks* of source code. In the simplest case, this means reading the code in front of the instruction until reaching a backtick.
