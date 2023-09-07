@@ -151,6 +151,14 @@ raise s = throwError $ Raise (RaiseData s [])
 addNote :: String -> X7 a -> X7 a
 addNote s = withError (_Raise.notes %~ (s:))
 
+deSpan :: Position -> X7 () -> X7 ()
+deSpan p m = do
+  s <- get
+  withError (id & outside _Raise .~ RaiseWithContext p s) m
+
+raises :: X7 () -> X7 Bool
+raises = handleError (const (pure True)) . (False <$)
+
 typeError :: X7 a
 typeError = raise "argument has unexpected type"
 
@@ -159,11 +167,6 @@ typeCompatError = raise "arguments are of incompatible types"
 
 indexError :: X7 a
 indexError = raise "index out of bounds"
-
-deSpan :: Position -> X7 () -> X7 ()
-deSpan p m = do
-  s <- get
-  withError (id & outside _Raise .~ RaiseWithContext p s) m
 
 getVar :: Char -> X7 View
 getVar c = use (vars . at c) >>= maybe (raise $ "variable '" ++ c : "' not defined") pure
@@ -208,13 +211,16 @@ focus f = val %%~ transformM \case
   Focused x -> f x
   x -> pure x
 
-deepen :: Depth -> View -> View
-deepen l v = v & depth .~ max (resolveDepth v) l
+setDepth :: Depth -> View -> View
+setDepth = (set flattened False .) . set depth
 
 resolveDepth :: View -> Depth
 resolveDepth v
   | v^.flattened = Deep
   | otherwise = v^.depth
+
+deepen :: Depth -> View -> View
+deepen l = join $ setDepth . max l . resolveDepth
 
 focus' :: Depth -> (Value -> X7 FocusedValue) -> View -> X7 View
 focus' d f v = deepen d <$> focus f v

@@ -33,6 +33,6 @@ executable x7
     default-extensions:
         LambdaCase,
         TemplateHaskell,
-        ViewPatterns,
         BlockArguments,
         OverloadedLists,
+        ViewPatterns,

@@ -2,6 +2,7 @@ module Parser where
 
 import Control.Applicative (liftA2)
 import Control.Monad
+import Control.Monad.Reader
 import Control.Lens hiding (op, List)
 import Data.Char
 import Data.List
@@ -16,25 +17,25 @@ import State
 type Parser = Parsec Void String
 
 data ElaborationError = FuncNotDefined Position Int Int
-type Elaboration = Validation [ElaborationError] (X7 ())
 
 instance Eq ElaborationError where
   (FuncNotDefined _ _ x) == (FuncNotDefined _ _ y) = x == y
 
-type Inst = Position -> SpanInst
-type SpanInst = [X7 ()] -> Elaboration
+type Inst = Position -> Inst'
+-- an Inst that already has the position data it needs
+type Inst' = ReaderT [X7 ()] (Validation [ElaborationError]) (X7 ())
 
-attachSpan :: Inst -> Position -> SpanInst
-attachSpan i pos = fmap (deSpan pos) . i pos  
-
-pureInst :: X7 () -> Inst
-pureInst = const . const . pure
+attachSpan :: Position -> Inst -> Inst'
+attachSpan p i = deSpan p <$> i p
 
 callInst :: Int -> Inst
-callInst n pos fns =
+callInst n pos = ReaderT \fns ->
   case fns ^? ix (n-1) of
     Just x -> Success x
     Nothing -> Failure [FuncNotDefined pos (length fns) n]
+
+sequenceInst :: [Inst'] -> Inst'
+sequenceInst = mapReaderT (_Failure %~ nub) . fmap sequence_ . sequenceA
 
 nonDigitChar :: Parser Char
 nonDigitChar = satisfy (not . isDigit) <?> "non-digit"
@@ -43,19 +44,32 @@ nonZeroDec :: Parser Int
 nonZeroDec = read <$> liftA2 (:) (satisfy (liftA2 (&&) (/='0') isDigit)) (many digitChar) <?> "nonzero number"
 
 intLit :: Parser Inst
-intLit = pureInst . pushView . ofValue . Rat . fromIntegral <$> (0 <$ char '0' <|> nonZeroDec)
+intLit = const . pure . pushView . ofValue . Rat . fromIntegral <$> (0 <$ char '0' <|> nonZeroDec)
 
 varGet :: Parser Inst
-varGet = char ';' >> pureInst . (>>= pushView) . getVar <$> nonDigitChar
+varGet = char ';' >> const . pure . (>>= pushView) . getVar <$> nonDigitChar
 
 varSet :: Parser Inst
-varSet = char ':' >> pureInst . (popView >>=)  . setVar <$> nonDigitChar
+varSet = char ':' >> const . pure . (popView >>=)  . setVar <$> nonDigitChar
 
 funCall :: Parser Inst
 funCall = char ';' >> callInst <$> nonZeroDec
 
+lastBlock :: Parser Inst'
+lastBlock = series <* optional (char '`')
+
+-- look into making the } optional here; any fun opportunities or is it just confusing?
+initBlock :: Parser Inst'
+initBlock = series <* char '}'
+
 o :: Char -> X7 () -> Parser Inst
-o c r = pureInst r <$ char c
+o c r = const (pure r) <$ char c
+
+o1 :: Char -> (X7 () -> X7 ()) -> Parser Inst
+o1 c r = const . fmap r <$> (char c *> lastBlock)
+
+o2 :: Char -> (X7 () -> X7 () -> X7 ()) -> Parser Inst
+o2 c r = (const .) . liftA2 r <$> (char c *> initBlock) <*> lastBlock
 
 inst :: Parser Inst
 inst = intLit <|> varSet <|> try varGet <|> funCall
@@ -92,12 +106,12 @@ inst = intLit <|> varSet <|> try varGet <|> funCall
     i' <- mapM (through _PosInt id pure) (i^..focused)
     case indexView notElem i' l' of
       Nothing -> indexError
-      Just v ->
-        let newDepth
-              | resolveDepth i >= Single = Deep
-              | resolveDepth l >= SingleDeep = SingleDeep
-              | otherwise = Single
-        in pushView $ depth .~ newDepth <&> flattened .~ False $ v
+      Just v -> let
+        newDepth
+          | resolveDepth i > Single = Deep
+          | resolveDepth l >= SingleDeep = SingleDeep
+          | otherwise = Single
+        in pushView $ setDepth newDepth v
   <|> o 'u' do
     i <- popView >>= drillAtom
     l <- popView >>= drillFrom SingleDeep
@@ -107,19 +121,24 @@ inst = intLit <|> varSet <|> try varGet <|> funCall
       Just v -> pushView $ deepen Deep v
   <?> "an instruction"
 
-sc :: Parser ()
-sc = hidden hspace
+curlyBraces :: Parser Inst'
+curlyBraces = pure (pure ()) <$ char '}' <|> char '{' *> series <* char '}'
 
-func :: Parser [SpanInst]
-func = sc >> many do
+inst' :: Parser Inst'
+inst' = curlyBraces <|> do
   SourcePos f row1 col1 <- getSourcePos
   i <- inst
   SourcePos _ row2 col2 <- getSourcePos
-  sc
-  pure . attachSpan i $ Position (unPos row1, unPos col1) (unPos row2, unPos col2) f
+  pure $ attachSpan (Position (unPos row1, unPos col1) (unPos row2, unPos col2) f) i
 
-x7 :: Parser [[SpanInst]]
-x7 = [] <$ eof <|> liftA2 (:) (func <* (void newline <|> eof)) x7
+sc :: Parser ()
+sc = hidden hspace
+
+series :: Parser Inst'
+series = sc >> sequenceInst <$> many (inst' <* sc)
+
+x7 :: Parser [Inst']
+x7 = [] <$ hidden eof <|> liftA2 (:) (series <* (void newline <|> eof <?> "end of line")) x7
 
 errorToReport :: ElaborationError -> Report String
 errorToReport = \case
@@ -129,9 +148,9 @@ errorToReport = \case
       | otherwise = "there are only " ++ show l ++ " lines in the file"
     in Err Nothing ("function " ++ show n ++ " is not defined") [(pos, This msg)] []
 
-elaborate :: [[SpanInst]] -> Either [Report String] (X7 ())
-elaborate fs = let
-  fs' = fs <&> (_Failure %~ nub) . fmap sequence_ . sequenceA . map ($ map (validation undefined id) fs')
+elaborate :: [Inst'] -> Either [Report String] (X7 ())
+elaborate fs =
+  let fs' = fs <&> flip runReaderT (map (validation undefined id) fs')
   in case sequenceA fs' of
     Success xs -> Right $ fromMaybe (pure ()) $ xs ^? _last
     Failure rs -> Left $ map errorToReport rs
