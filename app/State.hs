@@ -90,11 +90,9 @@ dot x y
 dot _ _ = Nothing
 
 _Integer :: Prism' Value Integer
-_Integer = _Rat . prism' fromIntegral \x -> if denominator x == 1 then Just (numerator x) else Nothing 
-
+_Integer = _Rat . prism' fromIntegral \x -> numerator x <$ guard (denominator x == 1)
 _PosInt :: Prism' Value Int
-_PosInt = _Integer . prism' fromIntegral \x -> if x >= 0 then Just (fromIntegral x) else Nothing
-
+_PosInt = _Integer . prism' fromIntegral \x -> fromIntegral x <$ guard (x >= 0)
 instance Plated FocusedValue
 
 data Depth = Top | Static | Single | SingleDeep | Deep deriving (Eq, Ord)
@@ -172,7 +170,7 @@ getVar :: Char -> X7 View
 getVar c = use (vars . at c) >>= maybe (raise $ "variable '" ++ c : "' not defined") pure
 
 setVar :: Char -> View -> X7 ()
-setVar c v = vars . at c ?= v 
+setVar c v = vars . at c ?= v
 
 popGroup :: X7 Group
 popGroup = join $ stack %%= \case
@@ -190,6 +188,9 @@ popView = popGroup >>= \(x:|xs) -> x <$ mapM_ pushView xs
 
 pushView :: View -> X7 ()
 pushView = pushGroup . pure
+
+pushValue :: Value -> X7 ()
+pushValue = pushView . ofValue
 
 focusedV :: Traversal' FocusedValue Value
 focusedV = biplate

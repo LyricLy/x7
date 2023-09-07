@@ -4,6 +4,7 @@ import Control.Applicative (liftA2)
 import Control.Monad
 import Control.Monad.Reader
 import Control.Lens hiding (op, List)
+import Data.Bool
 import Data.Char
 import Data.List
 import Data.Maybe
@@ -44,7 +45,7 @@ nonZeroDec :: Parser Int
 nonZeroDec = read <$> liftA2 (:) (satisfy (liftA2 (&&) (/='0') isDigit)) (many digitChar) <?> "nonzero number"
 
 intLit :: Parser Inst
-intLit = const . pure . pushView . ofValue . Rat . fromIntegral <$> (0 <$ char '0' <|> nonZeroDec)
+intLit = const . pure . pushValue . Rat . fromIntegral <$> (0 <$ char '0' <|> nonZeroDec)
 
 varGet :: Parser Inst
 varGet = char ';' >> const . pure . (>>= pushView) . getVar <$> nonDigitChar
@@ -92,7 +93,7 @@ inst = intLit <|> varSet <|> try varGet <|> funCall
   <|> o '>' (comparison (>))
   <|> o 'L' (comparison (<=))
   <|> o ',' (op2 pure \x y -> pure $ Pair (x, y))
-  <|> o '[' (pushView . ofValue $ List mempty)
+  <|> o '[' (pushValue $ List mempty)
   <|> o '.' (op2 pure \x y -> maybe typeCompatError pure (dot x y))
   <|> o ']' (op pure $ pure . List . pure)
   <|> o 'i' (op drillAtom $ through _PosInt id \n -> pure . List $ fmap (Rat . fromIntegral) [0..n-1])
@@ -119,6 +120,7 @@ inst = intLit <|> varSet <|> try varGet <|> funCall
     case indexView elem i' l of
       Nothing -> indexError
       Just v -> pushView $ deepen Deep v
+  <|> o1 'w' (\b -> opTic pure Top \x -> bool (Focused x) (unFocus x) <$> raises (pushValue x >> b))
   <?> "an instruction"
 
 curlyBraces :: Parser Inst'
