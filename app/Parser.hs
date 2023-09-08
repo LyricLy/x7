@@ -6,7 +6,7 @@ import Control.Monad.Reader
 import Control.Lens hiding (op, List)
 import Data.Bool
 import Data.Char
-import Data.List
+import Data.List.NonEmpty (NonEmpty, nub)
 import Data.Maybe
 import Data.Validation
 import Data.Void
@@ -24,7 +24,7 @@ instance Eq ElaborationError where
 
 type Inst = Position -> Inst'
 -- an Inst that already has the position data it needs
-type Inst' = ReaderT [X7 ()] (Validation [ElaborationError]) (X7 ())
+type Inst' = ReaderT [X7 ()] (Validation (NonEmpty ElaborationError)) (X7 ())
 
 attachSpan :: Position -> Inst -> Inst'
 attachSpan p i = deSpan p <$> i p
@@ -97,8 +97,8 @@ inst = intLit <|> varSet <|> try varGet <|> funCall
   <|> o '.' (op2 pure \x y -> maybe typeCompatError pure (dot x y))
   <|> o ']' (op pure $ pure . List . pure)
   <|> o 'i' (op drillAtom $ through _PosInt id \n -> pure . List $ fmap (Rat . fromIntegral) [0..n-1])
-  <|> o 'h' (opTic drillAtom Static $ through _Pair _Pair $ \(x, y) -> pure (Focused x, unFocus y))
-  <|> o 't' (opTic drillAtom Static $ through _Pair _Pair $ \(x, y) -> pure (unFocus x, Focused y))
+  <|> o 'h' (opTic drillAtom Static $ through _Pair _Pair \(x, y) -> pure (Focused x, unFocus y))
+  <|> o 't' (opTic drillAtom Static $ through _Pair _Pair \(x, y) -> pure (unFocus x, Focused y))
   <|> o 'j' (popView >>= flatten' >>= pushView)
   <|> o 'n' do
     i <- popView >>= drillAtom
@@ -121,6 +121,11 @@ inst = intLit <|> varSet <|> try varGet <|> funCall
       Nothing -> indexError
       Just v -> pushView $ deepen Deep v
   <|> o1 'w' (\b -> opTic pure Top \x -> bool (Focused x) (unFocus x) <$> raises (pushValue x >> b))
+  <|> o '@' do
+    l <- popView >>= drillFrom Top
+    case l^..focused of
+      [x] -> pushValue x
+      xs -> addNote "'@' requires exactly one value to be focused" . raise $ show (length xs) ++ " values are focused"
   <?> "an instruction"
 
 curlyBraces :: Parser Inst'
@@ -150,9 +155,9 @@ errorToReport = \case
       | otherwise = "there are only " ++ show l ++ " lines in the file"
     in Err Nothing ("function " ++ show n ++ " is not defined") [(pos, This msg)] []
 
-elaborate :: [Inst'] -> Either [Report String] (X7 ())
+elaborate :: [Inst'] -> Either (NonEmpty (Report String)) (X7 ())
 elaborate fs =
   let fs' = fs <&> flip runReaderT (map (validation undefined id) fs')
   in case sequenceA fs' of
     Success xs -> Right $ fromMaybe (pure ()) $ xs ^? _last
-    Failure rs -> Left $ map errorToReport rs
+    Failure rs -> Left $ fmap errorToReport rs
