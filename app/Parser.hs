@@ -8,6 +8,7 @@ import Data.Bool
 import Data.Char
 import Data.List.NonEmpty (NonEmpty, nub)
 import Data.Maybe
+import Data.Sequence (fromList)
 import Data.Validation
 import Data.Void
 import Error.Diagnose
@@ -95,7 +96,6 @@ inst = intLit <|> varSet <|> try varGet <|> funCall
   <|> o ',' (op2 pure \x y -> pure $ Pair (x, y))
   <|> o '[' (pushValue $ List mempty)
   <|> o '.' (op2 pure \x y -> maybe typeCompatError pure (dot x y))
-  <|> o ']' (op pure $ pure . List . pure)
   <|> o 'i' (op drillAtom $ through _PosInt id \n -> pure . List $ fmap (Rat . fromIntegral) [0..n-1])
   <|> o 'h' (opTic drillAtom Static $ through _Pair _Pair \(x, y) -> pure (Focused x, unFocus y))
   <|> o 't' (opTic drillAtom Static $ through _Pair _Pair \(x, y) -> pure (unFocus x, Focused y))
@@ -123,6 +123,7 @@ inst = intLit <|> varSet <|> try varGet <|> funCall
     case l^..focused of
       [x] -> pushValue x
       xs -> addNote "'@' requires exactly one value to be focused" . raise $ show (length xs) ++ " values are focused"
+  <|> o ']' (popView >>= drillEnlist >>= \v -> pushValue . List . fromList $ v^..focused)
   <?> "an instruction"
 
 curlyBraces :: Parser Inst'

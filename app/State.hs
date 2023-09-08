@@ -243,15 +243,19 @@ flatten' = maybe (raise "focus is not list (can't drill)") pure . flatten
 
 type Drill = View -> X7 View
 
-drillFrom :: Depth -> Drill
-drillFrom d v
-  | v^.depth <= d = addNote ("instruction drills from " ++ show d ++ " and argument is at " ++ show (v^.depth)) $ flatten' v
+drillWhen :: Getter View Bool -> Drill
+drillWhen g v
+  | v^.g = flatten' v
   | otherwise = pure v
 
+drillFrom :: Depth -> Drill
+drillFrom d v = addNote ("instruction drills from " ++ show d ++ " and argument is " ++ show (v^.depth)) $ drillWhen (depth . to (<= d)) v
+
 drillSelMany :: Drill
-drillSelMany l
-  | l^.onePerList = addNote "instruction drills when 'j' has not been used (implicitly or explicitly) since the last time 'n' was used" $ flatten' l
-  | otherwise = pure l
+drillSelMany v = addNote "instruction drills when 'j' has not been used (implicitly or explicitly) since the last time 'n' was used" $ drillWhen onePerList v
+
+drillEnlist :: Drill
+drillEnlist v = addNote "']' drills when 'j' was the last optic used" $ drillWhen flattened v
 
 drillAtom :: Drill
 drillAtom x@(flatten -> Just v)
