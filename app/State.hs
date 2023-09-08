@@ -4,16 +4,17 @@ import Control.Lens hiding (List)
 import Control.Monad
 import Control.Monad.State
 import Control.Monad.Except
-import Data.Ratio
 import Data.Char
 import Data.Data
 import Data.Data.Lens
 import Data.Foldable
+import Data.Functor
 import Data.List
 import Data.List.NonEmpty (NonEmpty(..))
 import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Maybe
+import Data.Ratio
 import Data.Void
 import Data.Sequence (Seq, (!?), (><))
 import Error.Diagnose
@@ -141,7 +142,7 @@ reportRaise r = go r 0
       in Err Nothing ("instruction raised" ++ masked) [(pos, This t)] (map Note (note : ns))
     go _ _ = error "reportRaise: got plain Raise"
 
-type X7 = StateT Place (Except Raise)
+type X7 = ExceptT Raise (State Place)
 
 raise :: String -> X7 a
 raise s = throwError $ Raise (RaiseData s [])
@@ -155,7 +156,11 @@ deSpan p m = do
   withError (id & outside _Raise .~ RaiseWithContext p s) m
 
 raises :: X7 () -> X7 Bool
-raises = handleError (const (pure True)) . (False <$)
+raises b = do
+  s <- get
+  (False <$ b) `catchError` \case
+    Mask e -> throwError e
+    _ -> True <$ put s
 
 typeError :: X7 a
 typeError = raise "argument has unexpected type"
@@ -319,4 +324,4 @@ indexView e is v =
   <$ mapM_ (\i -> v ^? hunt . elementOf (traverse.selectedOf) i) is
 
 runX7 :: X7 () -> Either Raise Place
-runX7 x = runExcept (execStateT x (Place [] M.empty))
+runX7 = uncurry ($>) . flip runState (Place [] M.empty) . runExceptT
