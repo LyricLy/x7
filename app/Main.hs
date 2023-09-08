@@ -28,8 +28,8 @@ printDiag :: Diagnostic String -> IO ()
 printDiag d = do
   tty <- hIsTerminalDevice stderr
   if tty
-  then printDiagnostic stderr WithUnicode (TabSize 4) defaultStyle d
-  else hPutDoc stderr $ prettyDiagnostic WithoutUnicode (TabSize 4) d
+    then printDiagnostic stderr WithUnicode (TabSize 4) defaultStyle d
+    else hPutDoc stderr $ prettyDiagnostic WithoutUnicode (TabSize 4) d
 
 main :: IO ()
 main = do

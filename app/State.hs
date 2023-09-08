@@ -96,16 +96,15 @@ _PosInt :: Prism' Value Int
 _PosInt = _Integer . prism' fromIntegral \x -> fromIntegral x <$ guard (x >= 0)
 instance Plated FocusedValue
 
-data Depth = Top | Static | Single | SingleDeep | Deep deriving (Eq, Ord)
+data Depth = Top | Static | Single | Deep deriving (Eq, Ord)
 
 instance Show Depth where
   show Top = "top"
   show Static = "static"
   show Single = "single"
-  show SingleDeep = "deep w/ single selections"
   show Deep = "deep"
 
-data View = View {_val :: FocusedValue, _depth :: Depth, _flattened :: Bool}
+data View = View {_val :: FocusedValue, _depth :: Depth, _flattened :: Bool, _onePerList :: Bool}
 makeLenses ''View
 type Group = NonEmpty View
 type Stack = [Group]
@@ -186,7 +185,7 @@ pushGroup :: Group -> X7 ()
 pushGroup g = stack %= (g:)
 
 ofValue :: Value -> View
-ofValue x = View (Focused x) Top False
+ofValue x = View (Focused x) Top False True
 
 popView :: X7 View
 popView = popGroup >>= \(x:|xs) -> x <$ mapM_ pushView xs
@@ -235,7 +234,7 @@ opTic :: Drill -> Depth -> (Value -> X7 FocusedValue) -> X7 ()
 opTic drill d f = popView >>= drill >>= focus' d f >>= pushView
 
 flatten :: View -> Maybe View
-flatten = flattened .~ True <&> focus \case
+flatten = onePerList .~ False <&> flattened .~ True <&> focus \case
   List v -> Just (List (fmap Focused v))
   _ -> Nothing
 
@@ -248,6 +247,11 @@ drillFrom :: Depth -> Drill
 drillFrom d v
   | v^.depth <= d = addNote ("instruction drills from " ++ show d ++ " and argument is at " ++ show (v^.depth)) $ flatten' v
   | otherwise = pure v
+
+drillSelMany :: Drill
+drillSelMany l
+  | l^.onePerList = addNote "instruction drills when 'j' has not been used (implicitly or explicitly) since the last time 'n' was used" $ flatten' l
+  | otherwise = pure l
 
 drillAtom :: Drill
 drillAtom x@(flatten -> Just v)

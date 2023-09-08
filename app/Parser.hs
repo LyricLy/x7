@@ -103,19 +103,16 @@ inst = intLit <|> varSet <|> try varGet <|> funCall
   <|> o 'n' do
     i <- popView >>= drillAtom
     l <- popView
-    l' <- drillFrom SingleDeep l
+    l' <- drillSelMany l
     i' <- mapM (through _PosInt id pure) (i^..focused)
     case indexView notElem i' l' of
       Nothing -> indexError
-      Just v -> let
-        newDepth
-          | resolveDepth i > Single = Deep
-          | resolveDepth l >= SingleDeep = SingleDeep
-          | otherwise = Single
-        in pushView $ setDepth newDepth v
+      Just v ->
+        let d = max (resolveDepth l) if resolveDepth i > Single then Deep else Single
+        in pushView $ setDepth d v & onePerList .~ True
   <|> o 'u' do
     i <- popView >>= drillAtom
-    l <- popView >>= drillFrom SingleDeep
+    l <- popView >>= drillSelMany
     i' <- mapM (through _PosInt id pure) (i^..focused)
     case indexView elem i' l of
       Nothing -> indexError
