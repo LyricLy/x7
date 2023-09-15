@@ -7,7 +7,6 @@ title = "x7 Reference"
 
 [output.html]
 additional-js = ["theme/custom-highlight.js"]
-additional-css = ["theme/style.css"]
 mathjax-support = true
 git-repository-url = "https://github.com/LyricLy/x7/tree/master/book"
 edit-url-template = "https://github.com/LyricLy/x7/edit/master/book/{path}"

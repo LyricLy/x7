@@ -3,7 +3,7 @@
 x7 is a stack-based language. If you've ever written Forth, used the `dc` calculator, or looked at any of the myriad stack-based esolangs before, you should feel right at home with this form of expressions.
 There is a single stack of [values](types.md) onto which intermediate results are placed, and instructions pop arguments from it to manipulate before pushing the result. 
 
-### Instruction index
+### Instructions used in this chapter
 | Symbol | Name | Brief |
 :-: | - | -
 `+` | add      | Add two numbers.

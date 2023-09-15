@@ -2,7 +2,7 @@
 
 This chapter is a primer on how to use the language's facilities to shuffle values around on the stack.
 
-### Instruction index
+### Instructions used in this chapter
 | Symbol | Name | Brief |
 :-: | - | -
 `d` | dup      | Duplicate the top group on the stack.
