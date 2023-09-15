@@ -118,12 +118,12 @@ eeemr}}}0`1`2
 ### Conditions
 x7 does not use booleans like most languages do. The only form of condition is "whether or not a certain block raises". As such, comparisons act like assertions:
 ```x7
-1 2 <
+1 2<
 > <empty>
 ```
 ```x7
-2 1 <
-> [<(1,2)>,(3,4)]
+2 1<
+> <raises>
 ```
 
 The operators `=` (equal), `/` (not equal), `<` (less than), `G` (not less than), `>` (greater than), and `L` (not greater than)
