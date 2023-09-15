@@ -2,7 +2,7 @@ module State where
 
 import Control.Lens hiding (List)
 import Control.Monad
-import Control.Monad.State
+import Control.Monad.State.Strict
 import Control.Monad.Except
 import Data.Char
 import Data.Data
@@ -94,6 +94,7 @@ _Integer :: Prism' Value Integer
 _Integer = _Rat . prism' fromIntegral \x -> numerator x <$ guard (denominator x == 1)
 _PosInt :: Prism' Value Int
 _PosInt = _Integer . prism' fromIntegral \x -> fromIntegral x <$ guard (x >= 0)
+
 instance Plated FocusedValue
 
 data Depth = Top | Static | Single | Deep deriving (Eq, Ord)
@@ -197,7 +198,8 @@ pushValue :: Value -> X7 ()
 pushValue = pushView . ofValue
 
 focusedV :: Traversal' FocusedValue Value
-focusedV = biplate
+focusedV f (Focused x) = Focused <$> f x
+focusedV f x = (plate . focusedV) f x
 
 focused :: Traversal' View Value
 focused = val . focusedV
@@ -206,15 +208,16 @@ unFocus :: Value -> FocusedValue
 unFocus = fmap absurd
 
 rmFocus :: FocusedValue -> FocusedValue
-rmFocus = transform $ id & outside _Focused .~ unFocus
+rmFocus = plate %~ rmFocus & outside _Focused .~ unFocus
 
 defocus :: View -> View
 defocus = ofValue . fmap undefined . rmFocus . view val
 
 focus :: Monad m => (Value -> m FocusedValue) -> View -> m View
-focus f = val %%~ transformM \case
-  Focused x -> f x
-  x -> pure x
+focus f = val %%~ go
+  where
+    go (Focused x) = f x
+    go x = x & plate %%~ go
 
 setDepth :: Depth -> View -> View
 setDepth = (set flattened False .) . set depth
@@ -323,13 +326,16 @@ type Withering' s a = Withering s s a a
 selectedOf :: Traversal' FocusedValue FocusedValue
 selectedOf = filtered (has focusedV)
 
+selectedOf' :: Traversal' (Seq FocusedValue) FocusedValue
+selectedOf' = traverse . selectedOf
+
 selected :: Withering' View Value
 selected = hunt . withered . selectedOf . focusedV
 
 indexView :: (Int -> [Int] -> Bool) -> [Int] -> View -> Maybe View
 indexView e is v =
-  (v & hunt . elementsOf (traverse.selectedOf) (`e` is) %~ rmFocus)
-  <$ mapM_ (\i -> v ^? hunt . elementOf (traverse.selectedOf) i) is
+  (v & hunt . elementsOf selectedOf' (`e` is) %~ rmFocus)
+  <$ mapM_ (\i -> v ^? hunt . elementOf selectedOf' i) is
 
 runX7 :: X7 () -> Either Raise Place
 runX7 = uncurry ($>) . flip runState (Place [] M.empty) . runExceptT

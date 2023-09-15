@@ -123,7 +123,7 @@ inst = intLit <|> varSet <|> try varGet <|> funCall
     case l^..focused of
       [x] -> pushValue x
       xs -> addNote "'@' requires exactly one value to be focused" . raise $ show (length xs) ++ " values are focused"
-  <|> o ']' (popView >>= drillEnlist >>= \v -> pushValue . List . fromList $ v^..focused)
+  <|> o ']' (popView >>= drillEnlist >>= pushValue . List . fromList . toListOf focused)
   <?> "an instruction"
 
 curlyBraces :: Parser Inst'
