@@ -69,14 +69,14 @@ We can use this to replicate some other Forth words, like `ROT`:
 ```
 
 ### Dipping
-The last 2 tools included for the stack take blocks. The first is `_` (under, often called `dip` in other languages),
-which pops a group, executes the block, and pushes the popped group again. This lets you do work lower down on the stack while preserving the top values.
+The last 2 tools included for the stack take blocks. The first is `_` (under; often called `dip` in other languages),
+which pops a group, executes the block, and pushes the popped group again. This lets you work lower on the stack, leaving higher values as they are.
 ```x7
 1 2 3_+
 > 3 3
 ```
 
-Finally, `2SWAP`:
+We can finally emulate `2SWAP`:
 ```x7
 1 2 3 4&_&`f
 > 3&4 1&2
@@ -90,4 +90,4 @@ It sounds complicated, but all it really does is let you execute multiple functi
 > 6 9
 ```
 Here we use it to compute both \\(3 + 3 = 6\\) and \\(3 * 3 = 9\\) without having to duplicate the inputs. This enables idioms reminiscent of a [fork](https://aplwiki.com/wiki/Train#3-trains)
-in APL or Haskell's [`liftA2`](https://hackage.haskell.org/package/base-4.18.0.0/docs/Prelude.html#v:liftA2) function used in the `(a ->)` functor, for which the instruction is named.
+in APL or Haskell's [`liftA2`](https://hackage.haskell.org/package/base-4.18.0.0/docs/Prelude.html#v:liftA2) function (when specialized to the `(->) r` functor), for which the instruction is named.

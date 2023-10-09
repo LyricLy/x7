@@ -42,7 +42,7 @@ rescue
 end
 puts x
 ```
-Running this Ruby program, the answer is `1`, because the `x` is incremented before the exception from dividing by zero is raised.
+The output of this program is `1`, because the `x` is incremented before the exception from dividing by zero is raised.
 However, the analogous program in x7 acts differently:
 ```x7
 0s1+1 0D
